@@ -4,3 +4,8 @@
 # Ignore Gradle build output directory
 build
 .idea
+lib/build
+lib/src/.idea
+lib/src/out
+lib/src/main/main.iml
+lib/src/test/test.iml
