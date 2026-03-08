@@ -42,4 +42,46 @@ public class BinarySearch {
 
         return -1;
     }
+
+    public int searchInRotatedSortedArray(int[] array, int target) {
+        // If array size is zero, element can't be present in the array.
+        if(array.length == 0) {
+            return -1;
+        }
+
+        // If array size is not zero, code will check if element is present in the given array using binary search
+        int start = 0;
+        int end = array.length - 1;
+
+        while (end > start) {
+            int mid = (start + end) / 2;
+            if (array[mid] == target) {
+                return mid;
+            }
+
+            if(array[mid] >= array[start]) {
+                // left half sorted
+                if(array[mid] > target && array[start] <= target) {
+                    end = mid - 1;
+                } else {
+                    start =  mid + 1;
+                }
+            } else {
+                // right half sorted
+                if(array[mid] < target && array[end] >= target) {
+                    start = mid + 1;
+                } else {
+                    end = mid - 1;
+                }
+            }
+        }
+
+        if(start == end) {
+            if(array[start] == target) {
+                return start;
+            }
+        }
+
+        return -1;
+    }
 }

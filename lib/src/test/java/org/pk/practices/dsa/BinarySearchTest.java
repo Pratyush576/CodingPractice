@@ -29,4 +29,17 @@ public class BinarySearchTest {
     public void searchTest(int[] array, int number, int expected) {
         Assertions.assertEquals(expected, search.search(array, number));
     }
+
+    static Stream<Arguments> rotatedSortedArraySearchProvider() {
+        return Stream.of(
+                arguments(new int[]{7, 8, 9, 1, 2, 3, 4, 5, 6}, 1, 3),
+                arguments(new int[]{4, 5, 6, 7, 8, 9, 1, 2, 3}, 7, 3)
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("rotatedSortedArraySearchProvider")
+    public void rotatedSortedArraySearchTest(int[] array, int number, int expected) {
+        Assertions.assertEquals(expected, search.searchInRotatedSortedArray(array, number));
+    }
 }
