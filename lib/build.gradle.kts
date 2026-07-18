@@ -22,6 +22,7 @@ dependencies {
 
     // This dependency is used internally, and not exposed to consumers on their own compile classpath.
     implementation(libs.guava)
+    implementation("com.graphql-java:graphql-java:23.0")
 }
 
 testing {

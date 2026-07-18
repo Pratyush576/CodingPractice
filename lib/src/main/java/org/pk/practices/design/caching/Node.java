@@ -1,4 +1,4 @@
-package org.pk.practices.dsa.caching;
+package org.pk.practices.design.caching;
 
 public class Node<K, V> {
     K k;

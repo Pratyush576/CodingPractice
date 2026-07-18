@@ -1,4 +1,4 @@
-package org.pk.practices.dsa.caching;
+package org.pk.practices.design.caching;
 
 public interface Cache<K, V> {
     public V get(K k);

@@ -1,4 +1,4 @@
-package org.pk.practices.dsa.caching;
+package org.pk.practices.design.caching;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -9,6 +9,7 @@ public class LruCache implements Cache<Integer, Integer> {
     LruCache(int size) {
         this.maxSize = size;
     }
+
 
     Map<Integer, Node<Integer, Integer>> cache = new HashMap<>();
     Node<Integer, Integer> first = null;
