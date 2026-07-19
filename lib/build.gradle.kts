@@ -72,11 +72,12 @@ testing {
 }
 
 application {
-    // Switch to the current hands-on main class, or run any of the three from the IDE:
-    //   GraphQL : org.pk.practices.design.api.graphql.GraphQlServer  (port 8082)
-    //   REST    : org.pk.practices.design.api.rest.RestApiServer      (port 8081)
-    //   gRPC    : org.pk.practices.design.api.grpc.client.Tester      (port 8080)
-    mainClass = "org.pk.practices.design.api.graphql.GraphQlServer"
+    // Switch to the current hands-on main class, or run any directly from the IDE:
+    //   WebSocket : org.pk.practices.design.api.websocket.ChatServer   (port 8083)
+    //   GraphQL   : org.pk.practices.design.api.graphql.GraphQlServer  (port 8082)
+    //   REST      : org.pk.practices.design.api.rest.RestApiServer      (port 8081)
+    //   gRPC      : org.pk.practices.design.api.grpc.client.Tester      (port 8080)
+    mainClass = "org.pk.practices.design.api.websocket.ChatServer"
 }
 
 // -parameters embeds constructor parameter names in bytecode.
