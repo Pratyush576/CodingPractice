@@ -1,0 +1,69 @@
+"""
+Employee management GraphQL schema.
+
+Core GraphQL concepts demonstrated here:
+  - Object types   (Employee)         — what data the API can return
+  - Input types    (CreateEmployeeInput, UpdateEmployeeInput) — typed write payloads
+  - Query type     — read operations (analogous to GET in REST)
+  - Mutation type  — write operations (analogous to POST / PUT / DELETE in REST)
+  - Non-null (!)   — field is guaranteed present; clients need not handle null
+  - List ([T!]!)   — a non-null list of non-null elements
+  - Arguments      — typed parameters passed to a field (id: ID!, department: String!)
+  - Descriptions   (triple-quoted strings) — rendered in schema explorers / docs
+"""
+
+# ── Queries (reads) ─────────────────────────────────────────────────────────
+
+type Query {
+
+    "Returns every employee in the store, sorted by ID."
+    employees: [Employee!]!
+
+    "Returns a single employee by ID, or null if no match is found."
+    employee(id: ID!): Employee
+
+    "Returns all employees belonging to the given department (case-insensitive)."
+    employeesByDepartment(department: String!): [Employee!]!
+}
+
+# ── Mutations (writes) ───────────────────────────────────────────────────────
+
+type Mutation {
+
+    "Creates a new employee. The server assigns the ID. Returns the created employee."
+    createEmployee(input: CreateEmployeeInput!): Employee!
+
+    """
+    Replaces the editable fields of an existing employee.
+    Only supplied fields are changed (partial-update / PATCH semantics).
+    Returns the updated employee, or null if the ID does not exist.
+    """
+    updateEmployee(id: ID!, input: UpdateEmployeeInput!): Employee
+
+    "Deletes an employee. Returns true if the employee existed, false otherwise."
+    deleteEmployee(id: ID!): Boolean!
+}
+
+# ── Types ────────────────────────────────────────────────────────────────────
+
+"A single employee resource."
+type Employee {
+    id: ID!
+    name: String!
+    department: String!
+    salary: Float!
+}
+
+"All fields required to create a new employee. The server assigns the ID."
+input CreateEmployeeInput {
+    name: String!
+    department: String!
+    salary: Float!
+}
+
+"Fields to update on an existing employee. Omitted fields are left unchanged."
+input UpdateEmployeeInput {
+    name: String
+    department: String
+    salary: Float
+}
