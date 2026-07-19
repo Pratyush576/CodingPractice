@@ -34,6 +34,12 @@ dependencies {
 
     // Needed for @Generated annotation on JDK 9+ (grpc codegen references it)
     compileOnly("org.apache.tomcat:annotations-api:6.0.53")
+
+    // REST (Javalin + embedded Jetty)
+    implementation("io.javalin:javalin:6.3.0")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+    // SLF4J binding — required by Javalin/Jetty for log output
+    implementation("org.slf4j:slf4j-simple:2.0.13")
 }
 
 protobuf {
@@ -66,7 +72,15 @@ testing {
 }
 
 application {
-    mainClass = "org.pk.practices.design.api.grpc.client.Tester"
+    // Switch between RestApiServer (REST hands-on) and Tester (gRPC hands-on) here,
+    // or run either directly from the IDE.
+    mainClass = "org.pk.practices.design.api.rest.RestApiServer"
+}
+
+// -parameters embeds constructor parameter names in bytecode.
+// Jackson uses them to deserialize JSON into Java records without @JsonProperty annotations.
+tasks.withType<JavaCompile> {
+    options.compilerArgs.add("-parameters")
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
