@@ -5,15 +5,19 @@
  * For more details on building Java & JVM projects, please refer to https://docs.gradle.org/9.2.1/userguide/building_java_projects.html in the Gradle documentation.
  * This project uses @Incubating APIs which are subject to change.
  */
+import com.google.protobuf.gradle.*
 
 plugins {
     // Apply the java-library plugin for API and implementation separation.
     `java-library`
+    application
+    id("com.google.protobuf") version "0.9.5"
 }
 
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
+    gradlePluginPortal()
 }
 
 dependencies {
@@ -23,7 +27,33 @@ dependencies {
     // This dependency is used internally, and not exposed to consumers on their own compile classpath.
     implementation(libs.guava)
     implementation("com.graphql-java:graphql-java:23.0")
+
+    implementation("io.grpc:grpc-protobuf:1.82.1")
+    implementation("io.grpc:grpc-stub:1.82.1")
+    runtimeOnly("io.grpc:grpc-netty-shaded:1.82.1")
+
+    // Needed for @Generated annotation on JDK 9+ (grpc codegen references it)
+    compileOnly("org.apache.tomcat:annotations-api:6.0.53")
 }
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.25.5"
+    }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.82.1"
+        }
+    }
+    generateProtoTasks {
+        all().forEach {
+            it.plugins {
+                create("grpc")
+            }
+        }
+    }
+}
+
 
 testing {
     suites {
@@ -33,6 +63,10 @@ testing {
             useJUnitJupiter("5.12.1")
         }
     }
+}
+
+application {
+    mainClass = "org.pk.practices.design.api.grpc.client.Tester"
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
