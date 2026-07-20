@@ -60,6 +60,442 @@ The benchmarks run automatically for every strategy in that list.
 
 ---
 
+## Locking Concepts — Types and When to Use
+
+Before diving into implementations, it helps to understand the conceptual categories
+that every locking mechanism falls into. Each lock in `java.util.concurrent` is a
+combination of choices from the categories below.
+
+---
+
+### The Core Problem: Why Locks Exist
+
+Three distinct problems arise when threads share mutable state without synchronisation:
+
+**1. Atomicity failure — the read-modify-write race**
+
+A single logical operation that requires multiple machine instructions can be
+interleaved with another thread's instructions in between.
+
+```
+  Thread A: read counter (= 5)
+  Thread B: read counter (= 5)    ← B reads before A has written
+  Thread A: write counter = 6
+  Thread B: write counter = 6     ← B's write clobbers A's
+  Result: 6 (expected 7) — one update is silently lost
+```
+
+**2. Visibility failure — CPU caches and compiler reordering**
+
+Modern CPUs maintain per-core caches. A write by Thread A may stay in A's cache
+and never be flushed to main memory before Thread B reads.
+
+```
+  Thread A writes: done = true;
+  Thread B reads:  while (!done) { spin(); }   ← may loop forever
+                                                   (B's cache line is stale)
+```
+
+**3. Ordering failure — instruction reordering**
+
+CPUs and JIT compilers reorder instructions for performance. The order a thread
+writes is not necessarily the order other threads observe.
+
+```
+  Thread A: data = compute();   ← CPU may reorder: publish ready first!
+            ready = true;
+  Thread B: if (ready) use(data);   ← sees ready=true but stale data — crash
+```
+
+**Locks solve atomicity and ordering. `volatile` solves visibility only.**
+
+---
+
+### Category 1 — By Access Model: Exclusive vs. Shared
+
+This is the most fundamental distinction between lock types.
+
+**Exclusive Lock (Mutex — Mutual Exclusion)**
+
+Only one thread may hold the lock at any time. All other threads block,
+regardless of whether they intend to read or write.
+
+```
+  State: Thread A holds the lock
+
+  Thread B (wants to write): ──── BLOCKED ────────────────────────────
+  Thread C (wants to read) : ──── BLOCKED ────  ← readers also blocked!
+  Thread D (wants to write): ──── BLOCKED ────
+
+  When A releases: exactly one of B, C, D proceeds
+```
+
+Java classes: `synchronized`, `ReentrantLock`, `StampedLock.writeLock()`
+
+**When to use:**
+- Any write to shared mutable state
+- A read that must be consistent with a prior write in the same operation
+- Small critical sections where the simplicity outweighs the read-blocking cost
+
+**When NOT to use:**
+- Read-dominated workloads — readers block each other unnecessarily (use Shared lock)
+
+---
+
+**Shared Lock (Read Lock)**
+
+Multiple threads may hold the lock simultaneously as long as no thread holds the
+write lock. Readers proceed concurrently; a writer blocks until all readers release.
+
+```
+  State: Threads A, B, C all hold read locks
+
+  Thread A (reading): ──── ACTIVE ────────────────────────────
+  Thread B (reading): ──── ACTIVE ────────────────────────────
+  Thread C (reading): ──── ACTIVE ────────────────────────────
+  Thread D (wants to write): ──── BLOCKED until A, B, C all release ────
+```
+
+Java classes: `ReentrantReadWriteLock.readLock()`, `StampedLock.readLock()`
+
+**When to use:**
+- Caches, configuration stores, route tables — state that is read often but written rarely
+- Reads are non-trivial in duration (if reads are nanoseconds, lock overhead dominates)
+
+**When NOT to use:**
+- Write rate is moderate-to-high — the write lock still serialises everything
+- You need reentrancy or `Condition` variables (use `ReentrantReadWriteLock`, not `StampedLock`)
+
+---
+
+### Category 2 — By Wait Strategy: Blocking vs. Spinning
+
+How does a thread behave while waiting for a lock it cannot acquire?
+
+**Blocking Lock**
+
+The OS parks (sleeps) the thread. No CPU is consumed while waiting. A context switch
+is required to both park and wake the thread (roughly 1–10 µs of overhead).
+
+```
+  Thread B cannot acquire:
+    ├─ OS parks Thread B                (state: BLOCKED or WAITING)
+    ├─ CPU freed for other threads
+    └─ When lock released: OS wakes B   (context switch back)
+```
+
+Java: `synchronized`, `ReentrantLock`, `ReadWriteLock`
+
+**Best for:** Long-held locks or high thread counts where CPU burning during a wait
+would be wasteful. The 1–10 µs context switch cost is amortised over the wait time.
+
+---
+
+**Spin Lock (Busy-Wait)**
+
+The thread loops continuously, repeatedly attempting to acquire. CPU is consumed
+while waiting, but zero wake-up latency when the lock becomes available.
+
+```
+  Thread B cannot acquire:
+    └─ while (!tryAcquire()) { /* spin — CPU at 100% */ }
+       → When lock released: Thread B responds in nanoseconds (no OS wakeup)
+```
+
+Java: CAS loops in `AtomicLong`, `AtomicReference` are a form of spin lock.
+
+**Best for:** Very short critical sections (a few instructions) where the spin time
+is less than the cost of a context switch. Harmful under high contention — wastes
+an entire core for the duration of the wait.
+
+---
+
+**Adaptive Spinning (Hybrid)**
+
+The JVM spins briefly before deciding to block. If the lock is released during
+the spin window, no context switch is needed. The spin duration adapts based on
+observed contention history.
+
+Java: `synchronized` uses adaptive spinning automatically. `ReentrantLock` does too
+via its underlying `AbstractQueuedSynchronizer` implementation.
+
+---
+
+### Category 3 — By Acquisition Strategy: Pessimistic vs. Optimistic
+
+**Pessimistic Locking**
+
+Assumes conflicts will happen. Acquires the lock before accessing shared state.
+No other thread can modify the data while the lock is held — no possibility of conflict.
+
+```
+  acquire lock
+    → read data  (guaranteed to be consistent)
+    → modify data (no interference possible)
+  release lock
+```
+
+Java: `synchronized`, `ReentrantLock`, `ReadWriteLock.writeLock()`
+
+**When to use:** Moderate-to-high write rate; when the cost of retrying a failed
+optimistic attempt is expensive (e.g. a partial computation that must restart).
+
+---
+
+**Optimistic Locking**
+
+Assumes conflicts are rare. Reads without acquiring a lock, then validates at
+"commit time" whether a writer was concurrent. If validation fails, retry.
+
+```
+  stamp = tryOptimisticRead()     ← reads a version number; NO lock acquired
+  snapshot = sharedVariable       ← unsynchronised read (may be partially stale)
+  if validate(stamp):
+      return snapshot             ← no writer ran concurrently; snapshot is valid ✓
+  else:
+      acquire real readLock()     ← a writer was concurrent; fall back to safe path
+      snapshot = sharedVariable
+      release readLock()
+```
+
+Java: `StampedLock.tryOptimisticRead()` + `lock.validate(stamp)`
+
+**When to use:** Read-dominated with rare writes. `validate()` almost always succeeds,
+making reads effectively free. Under high write contention, validation fails frequently
+and the fallback cost erodes the advantage.
+
+---
+
+### Category 4 — By Reentrancy
+
+**Reentrant (Recursive) Lock**
+
+A thread that already holds the lock can acquire it again without deadlocking. The lock
+keeps a hold count; it fully releases only when the count returns to zero.
+
+```
+  lock.lock();           // hold count: 1
+    doSomething();
+    lock.lock();         // hold count: 2  ← same thread, no deadlock
+      doSomethingElse();
+    lock.unlock();       // hold count: 1
+  lock.unlock();         // hold count: 0  ← lock actually released here
+```
+
+Java: `synchronized` (implicit), `ReentrantLock`, `ReentrantReadWriteLock`
+
+**When to use:** Any time a method that holds a lock calls another method that also
+acquires the same lock. Without reentrancy, this deadlocks.
+
+```java
+// Example: remove() holds the lock and calls contains(), which also locks — safe!
+public synchronized void remove(Object o) {
+    if (contains(o)) {          // contains() is also synchronized on same monitor
+        list.remove(o);         // works because synchronized is reentrant
+    }
+}
+public synchronized boolean contains(Object o) { return list.contains(o); }
+```
+
+---
+
+**Non-Reentrant Lock**
+
+A thread that already holds the lock and tries to acquire it again will deadlock —
+it waits for itself to release, which can never happen.
+
+```
+  stamp = lock.writeLock();          // Thread A holds the write lock
+    doSomething();
+    stamp2 = lock.writeLock();       // Thread A tries to re-acquire — DEADLOCK
+```
+
+Java: `StampedLock`
+
+**Why accept this limitation?** `StampedLock` trades away reentrancy to enable its
+optimistic read path, which offers dramatically higher read throughput.
+
+**How to use safely:** Never let a `StampedLock`-guarded method call another method
+that acquires the same `StampedLock`.
+
+---
+
+### Category 5 — By Fairness
+
+**Unfair Lock (Default)**
+
+When a lock is released, any thread — including a thread that just arrived and hasn't
+been waiting — may acquire it ("barging"). The OS thread scheduler decides.
+
+```
+  Lock released. Waiting queue: [B, C, D]  (arrived in that order)
+  Thread E arrives at exactly this moment
+  → Thread E may acquire before B (who has been waiting longer)
+```
+
+**Advantage:** Higher average throughput. When a thread releases and immediately tries
+to re-acquire, it can do so without a context switch.
+
+**Disadvantage:** A thread can theoretically wait indefinitely if new threads keep
+arriving — starvation is possible.
+
+Java: Default for `ReentrantLock`, `ReentrantReadWriteLock`, `Semaphore`
+
+---
+
+**Fair Lock (FIFO)**
+
+Threads acquire the lock strictly in the order they requested it. No barging allowed.
+
+```
+  Lock released. Waiting queue: [B, C, D, E]
+  → Lock goes to B. Then C. Then D. Then E. — strictly FIFO.
+```
+
+**Advantage:** No starvation — every thread is guaranteed to eventually proceed.
+Worst-case latency is bounded by queue length.
+
+**Disadvantage:** ~2–5× lower throughput. Even when the CPU is available, a sleeping
+thread must be woken (context switch) before it can acquire — barging is prohibited.
+
+Java: `new ReentrantLock(true)`, `new ReentrantReadWriteLock(true)`, `new Semaphore(n, true)`
+
+**When to use:** When starvation would have business consequences (billing pipelines,
+audit logs, fairness-sensitive queuing systems), or when worst-case latency SLAs
+matter more than average throughput.
+
+---
+
+### Category 6 — By Acquisition Behaviour: Timed / Try / Interruptible
+
+These advanced acquisition modes are only available on `ReentrantLock` — not on `synchronized`.
+
+**Unconditional (`lock()`):**
+Blocks forever. Interrupt has no effect while waiting.
+```java
+lock.lock();   // waits indefinitely; ignores Thread.interrupt()
+```
+
+**Non-blocking try (`tryLock()`):**
+Acquires only if the lock is immediately available; returns `false` otherwise.
+```java
+if (lock.tryLock()) {
+    try { doWork(); } finally { lock.unlock(); }
+} else {
+    // lock is held — skip this operation or use a fallback
+}
+```
+**Use case:** Circuit-breaker; avoiding deadlocks by backing off when a lock is unavailable.
+
+**Timed try (`tryLock(timeout, unit)`):**
+Waits up to the specified duration; returns `false` if the deadline elapses.
+```java
+if (lock.tryLock(500, TimeUnit.MILLISECONDS)) {
+    try { doWork(); } finally { lock.unlock(); }
+} else {
+    throw new ServiceUnavailableException("Lock not available within SLA");
+}
+```
+**Use case:** Service operations with latency SLAs; preventing indefinite waits on a slow lock holder.
+
+**Interruptible (`lockInterruptibly()`):**
+Throws `InterruptedException` if the thread is interrupted while waiting.
+```java
+lock.lockInterruptibly();   // responds to Thread.interrupt() while waiting
+try { doWork(); } finally { lock.unlock(); }
+```
+**Use case:** Thread-pool shutdown; long-running operations that must respect cancellation.
+`synchronized` and plain `lock()` ignore interrupts while waiting — a thread can be stuck forever.
+
+---
+
+### Category 7 — Intrinsic (Monitor) vs. Explicit Lock
+
+**Intrinsic Lock / Monitor**
+
+Every Java object has a built-in monitor. `synchronized` acquires it. The monitor
+includes one implicit condition variable — threads call `wait()` / `notify()` /
+`notifyAll()` on the guarded object.
+
+```
+  Java object in memory:
+  ┌──────────────────────────────────────┐
+  │  Mark word (in object header)        │  ← lock state: unlocked / biased /
+  │                                      │    lightweight / inflated (monitor ptr)
+  │  Monitor (when contended):           │
+  │    owner    → current holder thread  │
+  │    entry set → blocked threads       │
+  │    wait set  → threads in wait()     │
+  └──────────────────────────────────────┘
+```
+
+**Limitation:** One condition variable per object. All threads waiting on different
+conditions (`notEmpty` and `notFull` for a bounded queue) must share the same
+wait set — `notifyAll()` wakes everyone, causing spurious wakeups.
+
+**Explicit Lock (`Lock` interface)**
+
+A separate object from the data it protects. Must be explicitly unlocked.
+Multiple `Condition` objects per lock are possible — each with its own wait set.
+
+```java
+Lock lock = new ReentrantLock();
+Condition notEmpty = lock.newCondition();   // separate wait set
+Condition notFull  = lock.newCondition();   // separate wait set
+
+// Producer only signals consumers, not other producers:
+notEmpty.signal();   // precise — wakes only threads waiting on notEmpty
+```
+
+---
+
+### Java Lock Taxonomy
+
+```
+java.util.concurrent.locks
+│
+├── Lock (interface: lock, unlock, tryLock, lockInterruptibly, newCondition)
+│   ├── ReentrantLock          ← mutex, reentrant, fair/unfair, full acquisition API
+│   └── (read/write locks implement Lock individually)
+│
+├── ReadWriteLock (interface: readLock, writeLock)
+│   └── ReentrantReadWriteLock ← shared reads + exclusive writes, reentrant, fair/unfair
+│
+├── StampedLock                ← optimistic reads, write lock, NOT reentrant, NOT a Lock impl.
+│                                 stamp-based API — must carry stamp through call chain
+│
+└── Condition (interface: await, signal, signalAll)
+    └── Created via lock.newCondition() on any Lock implementation
+
+java.util.concurrent  (coordination primitives — not mutual exclusion)
+├── Semaphore              ← N permits; counting; no ownership
+├── CountDownLatch         ← one-shot gate; count → 0 → permanently open
+├── CyclicBarrier          ← reusable phase barrier; barrier action on last arrival
+└── Phaser                 ← flexible multi-phase; dynamic registration/deregistration
+
+java.util.concurrent.atomic  (lock-free, CAS-based)
+├── AtomicLong / AtomicInteger / AtomicBoolean
+├── AtomicReference / AtomicStampedReference
+└── LongAdder / LongAccumulator  ← striped counters; better than AtomicLong under high contention
+```
+
+---
+
+### Properties Matrix — Every Mechanism at a Glance
+
+| Mechanism | Exclusive | Shared read | Reentrant | Fair opt. | tryLock | Interruptible | Optimistic | Spin/CAS |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `synchronized` | Yes | No | Yes | No | No | No | No | Adaptive |
+| `ReentrantLock` | Yes | No | Yes | Yes | Yes | Yes | No | Adaptive |
+| `ReadWriteLock` — read | No | **Yes** | Yes | Yes | Yes | Yes | No | Adaptive |
+| `ReadWriteLock` — write | Yes | No | Yes | Yes | Yes | Yes | No | Adaptive |
+| `StampedLock` — write | Yes | No | **No** | No | Yes | No | No | No |
+| `StampedLock` — optimistic | No | No | N/A | N/A | N/A | N/A | **Yes** | Yes |
+| `AtomicLong` / CAS | N/A | N/A | N/A | N/A | N/A | N/A | Yes | **Yes** |
+| `Semaphore` | No (N permits) | N/A | No | Yes | Yes | Yes | No | No |
+
+---
+
 ## Part 1 — Mutual-Exclusion Strategies
 
 These implement `LockingStrategy` and are compared in the benchmarks.
@@ -491,29 +927,74 @@ The read-heavy benchmark shows the real power of `ReadWriteLock` and `StampedLoc
 ## Decision Guide
 
 ```
-Need to protect a critical section?
+What problem are you solving?
 │
-├── Simple, no special features needed?
-│   └── synchronized                    (most readable)
+├─ Shared mutable state (multiple threads read/write the same object)
+│   │
+│   ├─ Do you write to it?
+│   │   │
+│   │   ├─ Yes, and writes are frequent (≥ 30% of operations)
+│   │   │   │
+│   │   │   ├─ Simplest possible solution?
+│   │   │   │   └── synchronized               — intrinsic, readable, zero boilerplate
+│   │   │   │
+│   │   │   └── Need advanced acquisition?
+│   │   │       ├── Can't wait forever?         → ReentrantLock  + tryLock(timeout)
+│   │   │       ├── Must honour cancellation?   → ReentrantLock  + lockInterruptibly()
+│   │   │       ├── No starvation acceptable?   → ReentrantLock(true) — fair/FIFO
+│   │   │       └── Multiple wait conditions?   → ReentrantLock  + lock.newCondition()
+│   │   │
+│   │   └─ Yes, but writes are rare (reads >> writes)
+│   │       │
+│   │       ├── Need reentrancy or Condition?   → ReentrantReadWriteLock
+│   │       │     (shared reads, exclusive writes; readers don't block each other)
+│   │       │
+│   │       └── Maximum read throughput, no reentrancy needed?
+│   │             → StampedLock  (optimistic read — lock-free fast path)
+│   │
+│   └─ No writes — just reads (or value set once, then read-only)
+│       └── volatile field  or  AtomicReference  (visibility, no mutual exclusion needed)
 │
-├── Need tryLock / timeout / interruptible / multiple Conditions?
-│   └── ReentrantLock                   (explicit lock)
-│       ├── Fairness needed (no starvation)?  → ReentrantLock(true)
-│       └── Default unfair (max throughput)?  → ReentrantLock()
+├─ Single field update (counter, flag, reference swap)
+│   │
+│   ├── Low-to-medium contention?       → AtomicLong / AtomicInteger / AtomicBoolean
+│   └── Very high contention on counter → LongAdder  (striped; better than AtomicLong)
 │
-├── Reads >> Writes?
-│   ├── Need reentrancy or Conditions?  → ReadWriteLock
-│   └── Read-optimised, no reentrancy?  → StampedLock (optimistic read)
-│
-├── Simple counter / flag / reference update?
-│   └── AtomicLong / AtomicReference / AtomicInteger   (lock-free CAS)
-│
-└── Coordination between threads (not mutual exclusion)?
-    ├── Limit concurrent access to N?   → Semaphore(N)
-    ├── Wait for N events (one-shot)?   → CountDownLatch
-    ├── N threads sync per phase?       → CyclicBarrier  (fixed N, reusable)
-    └── Dynamic parties, multi-phase?   → Phaser         (flexible)
+└─ Thread coordination — not guarding shared state, but synchronising execution
+    │
+    ├── Cap concurrent access to N resources (connection pool, rate limiting)?
+    │     → Semaphore(N)               — counting permits, no ownership
+    │
+    ├── One thread starts; many workers proceed simultaneously (start gate)?
+    │     → CountDownLatch(1)          — countDown() once, all await()-ers released
+    │
+    ├── Main thread waits for N async tasks to complete (end gate)?
+    │     → CountDownLatch(N)          — each task countDown()s; main await()s
+    │
+    ├── N threads must all finish Phase 1 before any begin Phase 2?
+    │     Fixed party count, reuse across phases?
+    │     → CyclicBarrier(N)           — resets automatically; optional barrier action
+    │
+    └── Multi-phase pipeline with dynamic participant count?
+          Workers may fail and deregister mid-flight?
+          → Phaser                     — register/deregister at runtime; override onAdvance()
 ```
+
+### Real-World Examples by Mechanism
+
+| Mechanism | Canonical real-world use |
+|---|---|
+| `synchronized` | Incrementing a shared counter; protecting an `ArrayList` from concurrent access |
+| `ReentrantLock` | Database transaction that must time out; cancellable long-running operation |
+| `ReentrantLock(fair)` | Task queue where every submitter must be served in order |
+| `ReadWriteLock` | In-memory cache (`get` = read lock; `invalidate`/`put` = write lock) |
+| `StampedLock` | High-frequency read of a routing table that rarely changes |
+| `AtomicLong` | Request counter, metrics collector, sequence ID generator |
+| `LongAdder` | High-concurrency hit counter (e.g. web analytics, rate limiter token bucket) |
+| `Semaphore` | HTTP connection pool; limiting concurrent DB queries; throttling API calls |
+| `CountDownLatch` | Microservice waits for Kafka, DB, and cache to be ready before accepting traffic |
+| `CyclicBarrier` | Parallel matrix computation: all threads finish column N before starting N+1 |
+| `Phaser` | ETL pipeline: all workers complete Extract before any start Transform |
 
 ---
 
