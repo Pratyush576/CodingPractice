@@ -73,13 +73,14 @@ testing {
 
 application {
     // Switch to the current hands-on main class, or run any directly from the IDE:
-    //   Bloom Filter : org.pk.practices.design.bloomfilter.BloomFilterDemo (no port — CLI)
-    //   EDI          : org.pk.practices.design.api.edi.EdiDemo             (no port — CLI)
-    //   WebSocket    : org.pk.practices.design.api.websocket.ChatServer     (port 8083)
-    //   GraphQL      : org.pk.practices.design.api.graphql.GraphQlServer    (port 8082)
-    //   REST         : org.pk.practices.design.api.rest.RestApiServer        (port 8081)
-    //   gRPC         : org.pk.practices.design.api.grpc.client.Tester        (port 8080)
-    mainClass = "org.pk.practices.design.bloomfilter.BloomFilterDemo"
+    //   Locking      : org.pk.practices.design.locking.LockingDemo          (no port — CLI)
+    //   Bloom Filter : org.pk.practices.design.bloomfilter.BloomFilterDemo   (no port — CLI)
+    //   EDI          : org.pk.practices.design.api.edi.EdiDemo               (no port — CLI)
+    //   WebSocket    : org.pk.practices.design.api.websocket.ChatServer       (port 8083)
+    //   GraphQL      : org.pk.practices.design.api.graphql.GraphQlServer      (port 8082)
+    //   REST         : org.pk.practices.design.api.rest.RestApiServer          (port 8081)
+    //   gRPC         : org.pk.practices.design.api.grpc.client.Tester          (port 8080)
+    mainClass = "org.pk.practices.design.locking.LockingDemo"
 }
 
 // -parameters embeds constructor parameter names in bytecode.
