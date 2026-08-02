@@ -4,6 +4,11 @@
 register themselves, be health-checked, and be found by peers via lookup or DNS. Target
 scale: **millions of instances** across thousands of services.
 
+All diagrams below are written in [Mermaid](https://mermaid.js.org/) rather than ASCII
+art, so they render natively on GitHub/GitLab and stay text-diffable in version control.
+Each diagram is followed by a short "How to read this diagram" note explaining the
+flow, not just the boxes.
+
 ---
 
 ## Table of Contents
@@ -48,39 +53,76 @@ scale: **millions of instances** across thousands of services.
 
 ## 2. High-Level Architecture
 
+### Request flow
+
+```mermaid
+flowchart TB
+    Client["Clients (services)"]
+    API["Service Discovery API Layer<br/>(DefaultServiceDiscovery / SDK / REST)"]
+    Registry[("Registry Storage")]
+    Health["Health Check Scheduler"]
+    DNS["DNS Resolver<br/>(A records, SRV)"]
+    LB["Load Balancing<br/>(RoundRobin / Random / ...)"]
+
+    Client -- "1. register / deregister / heartbeat / lookup" --> API
+    API -- "2" --> Registry
+    API -. "3. wired at construction" .-> Health
+    API -. "4. wired at construction" .-> DNS
+    Health -- "5. read instances, write health state (continuous background loop)" --> Registry
+    DNS -- "6. read live instances (on-demand, per query)" --> Registry
+    Registry -- "7" --> LB
+    LB -- "8. pick()" --> Client
 ```
- Clients (services)
-       │
-       │  register / deregister / heartbeat / lookup
-       ▼
- ┌──────────────────────────────────────────────────────────┐
- │              Service Discovery API Layer                  │
- │         (DefaultServiceDiscovery / SDK / REST)           │
- └──────┬──────────────┬───────────────┬────────────────────┘
-        │              │               │
-        ▼              ▼               ▼
- ┌──────────┐  ┌──────────────┐  ┌──────────────────────┐
- │ Registry │  │ Health Check │  │     DNS Resolver      │
- │  Storage │  │  Scheduler   │  │  (A records, SRV)     │
- └──────────┘  └──────────────┘  └──────────────────────┘
-        │
-        ▼
- ┌──────────────────────────────────────────────────────────┐
- │          Load Balancing (RoundRobin / Random / ...)       │
- └──────────────────────────────────────────────────────────┘
-```
+
+**How to read this diagram:** The API layer is the only thing clients talk to — it is
+a [Facade](#11-design-patterns-used) over three independent subsystems that all share
+one `Registry`. The `Health Check Scheduler` runs continuously in the background
+regardless of client traffic, mutating instance health state directly in the registry.
+`DNS Resolver` never caches — every query re-reads the registry, so DNS answers are
+only as stale as the registry's own consistency window. `Load Balancing` operates on
+whatever `lookup()` returns (already health-filtered), so a strategy never needs to
+know about health state itself.
+
+**Sequence:**
+1. Client calls the API — `register`, `deregister`, `heartbeat`, or `lookup`.
+2. The API delegates the call directly to the `Registry` (storage layer).
+3. At construction time, the API wires the `Health Check Scheduler` with a reference to the registry — this is one-time wiring, not a per-call step.
+4. Likewise, the API wires the `DNS Resolver` with a registry reference at construction.
+5. Independently of any client call, the scheduler loops forever on its own timer: read every instance, probe it, write back updated health state.
+6. Whenever a DNS query (`resolveA` / `resolveSrv`) arrives, the resolver reads the registry fresh — nothing is cached server-side.
+7. For a `pick()` call, the registry's already health-filtered instance list is handed to the load-balancing strategy.
+8. The strategy picks one instance and the API returns it to the caller.
 
 ### Production cluster layout (3+ regions)
 
+```mermaid
+flowchart LR
+    subgraph RegionA["Region A"]
+        A["Discovery Cluster x3"]
+    end
+    subgraph RegionB["Region B"]
+        B["Discovery Cluster x3"]
+    end
+    subgraph RegionC["Region C"]
+        C["Discovery Cluster x3"]
+    end
+    DNS["Global DNS"]
+
+    A <-->|Raft| B
+    B <-->|Raft| C
+    A --> DNS
+    B --> DNS
+    C --> DNS
 ```
-  Region A                    Region B                    Region C
-  ┌──────────────┐            ┌──────────────┐            ┌──────────────┐
-  │ Discovery    │◄──Raft────►│ Discovery    │◄──Raft────►│ Discovery    │
-  │ Cluster x3   │            │ Cluster x3   │            │ Cluster x3   │
-  └──────────────┘            └──────────────┘            └──────────────┘
-         │                          │                           │
-         └─────────────────── Global DNS ──────────────────────┘
-```
+
+**How to read this diagram:** Each region owns an independent 3-node cluster
+replicated via Raft, so a region keeps serving writes even if the other two are
+unreachable (partition tolerance — see [§6](#6-consistency--availability-trade-offs)).
+Global DNS sits above all three clusters and is the only cross-region coupling on the
+read path: a client resolving `user-service.production.svc.discovery` gets routed to
+its nearest healthy region, not to a specific node. There is deliberately no
+cross-region Raft quorum — that would make every write pay a multi-region round trip,
+defeating the point of regional isolation.
 
 ---
 
@@ -88,32 +130,60 @@ scale: **millions of instances** across thousands of services.
 
 ### Hierarchy
 
-```
-Namespace  (e.g., "production", "staging", "tenant-acme")
-  └── Service  (e.g., "user-service", "order-service")
-        └── Instance  (e.g., "user-svc-1")
-              ├── Registration data (immutable after register)
-              │     host, port, metadata, registeredAt
-              └── Runtime state (mutable, health-engine driven)
-                    healthStatus, lastHeartbeat, lastChecked, consecutiveFailures
+```mermaid
+graph TD
+    NS["Namespace<br/><i>production / staging / tenant-acme</i>"]
+    S1["Service<br/><i>user-service</i>"]
+    S2["Service<br/><i>order-service</i>"]
+    I1["Instance: user-svc-1"]
+    I2["Instance: user-svc-2"]
+    I3["Instance: order-svc-1"]
+
+    NS --> S1
+    NS --> S2
+    S1 --> I1
+    S1 --> I2
+    S2 --> I3
 ```
 
-### Why split ServiceInstance and InstanceState?
+**How to read this diagram:** Three levels, always traversed top-down. A namespace
+gives full tenant/environment isolation — two namespaces can register a service with
+the same name without colliding. A lookup always specifies namespace + service name;
+there is no cross-namespace query, which keeps the registry's key space a simple
+three-level tree instead of a general graph.
 
-```
-ServiceInstance (record — immutable)          InstanceState (class — mutable)
-  instanceId                                    AtomicReference<HealthStatus>
-  serviceName                                   volatile Instant lastHeartbeat
-  namespace                                     volatile Instant lastChecked
-  host, port                                    AtomicInteger consecutiveFailures
-  metadata
-  registeredAt
+### Why split `ServiceInstance` and `InstanceState`?
+
+```mermaid
+classDiagram
+    class ServiceInstance {
+        <<immutable record>>
+        String instanceId
+        String serviceName
+        String namespace
+        String host
+        int port
+        Map~String,String~ metadata
+        Instant registeredAt
+    }
+    class InstanceState {
+        <<mutable, thread-safe>>
+        AtomicReference~HealthStatus~ healthStatus
+        volatile Instant lastHeartbeat
+        volatile Instant lastChecked
+        AtomicInteger consecutiveFailures
+    }
+    InstanceState "1" --> "1" ServiceInstance : wraps
 ```
 
-Keeping the registration record immutable avoids the need to serialise/deserialise it
-on every health check update. The registry can swap the health status without touching
-the registration data. In a distributed system, health state is volatile gossip-propagated
-data while registration data is durably stored in the KV store.
+**How to read this diagram:** `InstanceState` wraps a `ServiceInstance` rather than
+extending or merging with it. Keeping the registration record immutable avoids the
+need to serialise/deserialise it on every health check update — only the small mutable
+`InstanceState` shell is touched every check cycle. The registry can swap the health
+status without touching the registration data at all. In a distributed system this
+maps onto two different replication paths: registration data is durably stored in the
+KV store, while health state is volatile, gossip-propagated data that is allowed to be
+lost and rebuilt from scratch.
 
 ### Key structure
 
@@ -160,16 +230,36 @@ is removed to prevent unbounded memory growth over time.
 
 ### 4.3 Health Check Scheduler
 
+```mermaid
+flowchart TD
+    A["1. start(intervalMs)"] --> B["2. scheduleAtFixedRate → runChecks()"]
+    B --> C["3. registry.getAll()"]
+    C --> D["4. for each InstanceState"]
+    D --> E{"5. healthCheck.check(instance)"}
+    E -->|true| F["6a. markHealthy() + reset consecutiveFailures"]
+    E -->|false| G["6b. recordFailure()"]
+    G --> H{"7. consecutiveFailures >= threshold?"}
+    H -->|yes| I["8a. markUnhealthy()"]
+    H -->|no| J["8b. stay HEALTHY — transient blip ignored"]
 ```
-start(intervalMs)
-  └── scheduleAtFixedRate → runChecks()
-        └── registry.getAll()
-              └── for each InstanceState:
-                    healthCheck.check(instance)
-                    ├── true  → markHealthy(), reset failures
-                    └── false → recordFailure()
-                                if failures >= threshold → markUnhealthy()
-```
+
+**How to read this diagram:** Every check cycle re-evaluates every instance
+independently — a slow or failing instance never blocks the check of another. The
+diamond in the middle is the hysteresis point: a single failed probe does not flip an
+instance to UNHEALTHY, only `threshold` consecutive failures do, which is what keeps
+a momentary network blip from yanking a healthy instance out of rotation.
+
+**Sequence:**
+1. `start(intervalMs)` runs once, when the platform starts.
+2. The scheduler registers `runChecks()` on a fixed-rate timer.
+3. Each cycle begins by pulling every `InstanceState` from the registry.
+4. The scheduler iterates instances one at a time — independently, so one slow check never blocks another.
+5. Each instance is probed via the injected `HealthCheck` strategy.
+6a. On success: reset `consecutiveFailures` to 0 and mark the instance HEALTHY.
+6b. On failure: increment `consecutiveFailures`.
+7. After a failed probe, check whether the failure count has crossed the configured threshold.
+8a. Threshold crossed → mark the instance UNHEALTHY; it drops out of `lookup()` / `pick()`.
+8b. Threshold not yet crossed → leave it HEALTHY; a single blip is ignored (hysteresis).
 
 **Failure threshold** prevents a single transient failure from pulling an instance out
 of rotation. Default: 2 consecutive failures → UNHEALTHY.
@@ -229,15 +319,26 @@ This eliminates polling and reduces propagation latency from O(check_interval) t
 
 ### 5.3 Caching layer
 
-```
-Client SDK
-  └── local cache (TTL = 10s)
-        ├── HIT: serve from cache (0 ms)
-        └── MISS: query discovery cluster → update cache
+```mermaid
+flowchart LR
+    Q["1. Client SDK: lookup(service)"] --> Cache{"2. Local cache<br/>TTL = 10s"}
+    Cache -->|HIT| Fast["3a. Serve from cache (~0 ms)"]
+    Cache -->|MISS| Query["3b. Query discovery cluster"]
+    Query --> Update["4. Update local cache"] --> Fast
 ```
 
-Local caching absorbs 99%+ of lookup traffic. The discovery cluster only receives
-cache misses and watch-triggered invalidations.
+**How to read this diagram:** The cache check happens entirely client-side before any
+network call — a hit never touches the discovery cluster. Local caching absorbs 99%+
+of lookup traffic this way; the discovery cluster only receives cache misses and
+watch-triggered invalidations, which is what lets a single cluster serve millions of
+lookups/sec without scaling linearly with client count.
+
+**Sequence:**
+1. The client SDK receives a `lookup(service)` call.
+2. It checks its local cache first (TTL = 10s).
+3a. HIT → serve the cached result immediately, no network call.
+3b. MISS → query the discovery cluster over the network.
+4. The fresh result is written into the local cache before being returned, so the next call — until TTL expires — takes the HIT path.
 
 ### 5.4 Read replicas
 
@@ -248,6 +349,25 @@ deregister hit the leader.
 ---
 
 ## 6. Consistency & Availability Trade-offs
+
+### Major design decisions — what was traded away
+
+Every non-trivial choice below picked one property at the direct cost of another.
+This is the decision log; the CAP discussion further down is the biggest single
+instance of it.
+
+| Decision | Chosen | Alternative(s) considered | What was traded away |
+|---|---|---|---|
+| Consistency model | AP — eventual consistency | CP — linearizable registry (ZooKeeper-style) | Strict consistency, in exchange for availability during partitions. A CP registry would reject reads/writes during a split; this platform serves stale data instead. See CAP position below. |
+| Change propagation (this impl) | Polling at a fixed interval | Push/watch (etcd watch, gossip) | Propagation latency — O(check interval) instead of O(ms) — in exchange for zero external dependency. Tracked as a production gap in [§12](#12-in-memory-vs-production-gaps). |
+| Health detection (primary signal) | Heartbeat TTL (passive) | Active probing only (TCP/HTTP from the cluster) | Depth of health signal — a heartbeat only proves the process is alive, not that it's actually serving — in exchange for working behind NAT/firewalls and O(1) cost per instance regardless of network topology. |
+| Failure threshold | N consecutive failures before UNHEALTHY | Single failed check → UNHEALTHY immediately | Detection latency (2 check cycles minimum) in exchange for immunity to flapping from one transient network blip. |
+| Storage backend (this impl) | In-memory `ConcurrentHashMap` | Embedded persistent store (RocksDB, etc.) | Durability — state is lost on JVM restart — in exchange for implementation simplicity at demo scale. Production path is etcd/Consul ([§5.2](#5-scale-strategy)). |
+| Default load-balancing strategy | RoundRobin | Least-connections, consistent hashing | Load awareness — RoundRobin doesn't know which instance is actually least loaded — in exchange for zero telemetry dependency: it needs nothing but a counter. |
+| Where load balancing happens | Both client-side (`lookup()`) and server-side (`pick()`) | Proxy-only (Envoy/NGINX sidecar) | Centralized, infra-level LB control in exchange for a library that works standalone without requiring a service mesh. [§9](#9-load-balancing) documents the proxy option as the production-common alternative. |
+| Sharding key | Namespace | Service name or instance ID | Even shard distribution (some namespaces are far bigger than others) in exchange for keeping "list every service in this namespace" a single-shard query instead of scatter-gather. |
+| DNS record freshness | Synthesize on every query, no server-side cache | Cache resolved records server-side | A small amount of CPU per query in exchange for not introducing a second staleness window on top of the client's own DNS TTL cache. |
+| `ServiceInstance` / `InstanceState` split | Two objects, one immutable one mutable | Single mutable object holding everything | A slightly larger object graph in exchange for letting registration data (durable) and health data (fast, lossy) travel on two different replication paths — see [§3](#3-data-model). |
 
 ### CAP theorem position
 
@@ -365,16 +485,44 @@ CoreDNS forwards `.svc.discovery` queries to the platform and caches responses.
 
 ### Where to balance
 
+```mermaid
+flowchart TB
+    subgraph A["Option A — Server-side pick()"]
+        direction LR
+        C1["Client"] -- "1. pick()" --> P1["2. Discovery Platform<br/>chooses one instance"] -- "3. 1 endpoint" --> C1
+    end
+    subgraph B["Option B — Client-side lookup()"]
+        direction LR
+        C2["Client"] -- "1. lookup()" --> P2["2. Discovery Platform"] -- "3. list of instances" --> SDK["4. SDK applies LB locally"]
+    end
+    subgraph C["Option C — L4/L7 proxy"]
+        direction LR
+        C3["Client"] -- "1" --> Proxy["Envoy / NGINX"] -- "2. routes request" --> Backends["Discovered backends"]
+    end
 ```
-Option A: Server-side (at the discovery platform)
-  Client calls pick() → platform chooses one instance → client gets endpoint
 
-Option B: Client-side (in the SDK)
-  Client calls lookup() → gets list → SDK applies LB locally → no round-trip for pick
+**How to read this diagram:** The three options trade a round trip for control. Option
+A costs an extra network hop per pick but lets the platform apply global load
+information (e.g. real-time connection counts) that a client can't see. Option B skips
+that hop — the SDK balances locally over a list it already cached — at the cost of
+each client only seeing point-in-time snapshots. Option C removes load-balancing logic
+from application code entirely by pushing it into infrastructure the client doesn't
+control.
 
-Option C: L4/L7 proxy (Envoy, NGINX)
-  Client connects to proxy → proxy balances across discovered backends
-```
+**Sequence — Option A:**
+1. Client calls `pick()` on the discovery platform.
+2. The platform itself chooses one instance (server-side decision).
+3. Exactly one endpoint is returned to the client.
+
+**Sequence — Option B:**
+1. Client calls `lookup()`.
+2. The platform returns the full list of healthy instances.
+3. The list travels back over the network to the client.
+4. The SDK applies its load-balancing strategy locally — no further round trip per pick.
+
+**Sequence — Option C:**
+1. Client connects to a proxy (Envoy/NGINX) instead of the discovery platform directly.
+2. The proxy, which already watches the discovered backends, routes the request itself.
 
 This implementation provides **Option A** via `pick()` and **Option B** via `lookup()`.
 Option C is the most production-common pattern — the discovery platform integrates
@@ -398,32 +546,93 @@ Use when: stateful services where the same caller must reach the same backend
 
 ### Instance crash (no graceful deregister)
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Instance
+    participant Scheduler as HealthCheckScheduler
+    participant Registry
+    participant Client
+
+    Note over Instance: t=0s — crashes, no deregister call
+    Note over Registry: t=3s — heartbeat TTL expires → healthStatus=UNKNOWN
+    Scheduler->>Registry: t=4s check cycle → consecutiveFailures=1 (still UNKNOWN)
+    Scheduler->>Registry: t=5s check cycle → consecutiveFailures=2 → UNHEALTHY
+    Client->>Registry: lookup()
+    Registry-->>Client: t=5s — instance excluded
+    Note over Client: DNS-cached clients converge once TTL=10s elapses
 ```
-t=0s   Instance crashes — no deregister call
-t=3s   Heartbeat TTL expires → healthStatus = UNKNOWN
-t=4s   Next health check cycle → consecutive_failures=1 → still unknown
-t=5s   Second check → consecutive_failures=2 → UNHEALTHY
-t=5s   lookup() stops returning this instance
-t=5s   DNS records updated (next query after TTL=10s picks up the change)
-```
+
+**How to read this diagram:** Two clocks run independently and the slower one
+dominates the outage window. The heartbeat TTL (3s) plus two check cycles (1s each)
+gets `lookup()` to exclude the dead instance by t=5s. But any client holding a cached
+DNS answer from before the crash keeps routing to it until its own TTL (10s) expires —
+that's why the total outage window below is DNS-dominated, not health-check-dominated.
+
+**Sequence** (Mermaid `autonumber` numbers only the arrows; the `Note` lines are context, not steps):
+- *(t=0s, before step 1)* The instance crashes without calling `deregister()`.
+- *(t=3s, before step 1)* The heartbeat TTL expires; the registry marks the instance `UNKNOWN`.
+1. *(t=4s)* First scheduled check cycle probes the instance and fails — `consecutiveFailures=1`, still `UNKNOWN`.
+2. *(t=5s)* Second consecutive failure crosses the threshold (2) — the instance flips to `UNHEALTHY`.
+3. A client calls `lookup()` for the service.
+4. *(t=5s)* The registry returns the healthy list with the dead instance already excluded.
+- *(after step 4)* Clients holding a cached DNS answer keep routing to the dead instance until their own TTL (10s) elapses — this is what makes the total outage window DNS-dominated.
 
 **Total outage window**: up to 5s for lookup + 10s for DNS-cached clients = 15s max.
 
 ### Discovery cluster node failure
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant NodeA as Discovery Node A (down)
+    participant NodeB as Discovery Node B
+
+    Client->>NodeA: query (cache miss)
+    NodeA--xClient: no response
+    Note over Client: falls back to local cache (TTL 10s) in the meantime
+    Client->>NodeB: retry on next cache miss
+    NodeB-->>Client: response — cluster still serving (2+ nodes healthy)
 ```
-Client SDK has local cache → serves traffic from cache for 10s
-Remaining cluster nodes take over → no gap if 2+ nodes healthy
-Client reconnects to next node on cache miss
-```
+
+**How to read this diagram:** The client never notices a clean failover as an outage
+because the local cache absorbs the gap between "Node A stopped responding" and "client
+retried against Node B." The only case this doesn't cover is every node in the cluster
+being down simultaneously, which is why clusters run 3+ nodes rather than 2.
+
+**Sequence:**
+1. Client queries Node A after a local cache miss.
+2. Node A doesn't respond — it's the failed node.
+   - *(between steps 2 and 3)* The client falls back to serving from its local cache (TTL 10s) rather than surfacing an error.
+3. On the next cache miss, the client retries against Node B.
+4. Node B answers normally — the cluster keeps serving uninterrupted because 2+ nodes are still healthy.
 
 ### Split-brain during network partition
 
+```mermaid
+flowchart TB
+    subgraph Partition["1. During network partition"]
+        NodeA["1a. Node A sees instances {1,2,3}"]
+        NodeB["1b. Node B sees instances {4,5}"]
+    end
+    NodeA -. "2. partition heals" .-> Reconcile["3. Raft consensus reconciles state"]
+    NodeB -. "2. partition heals" .-> Reconcile
+    Reconcile --> Discard["4. Minority side discards divergent writes"]
 ```
-Partition: Node A sees {instances 1,2,3}; Node B sees {instances 4,5}
-During partition: clients on each side see different subsets (both available!)
-After partition heals: Raft consensus reconciles state; minority side discards divergent writes
-```
+
+**How to read this diagram:** Both sides of the partition keep serving reads and
+writes — that's the AP choice from [§6](#6-consistency--availability-trade-offs) —
+which is why clients on each side see *different but both available* subsets during
+the split. The dotted arrows mark the point where Raft consensus resumes: whichever
+side had the minority of nodes at healing time loses any writes that conflict with the
+majority side's history.
+
+**Sequence:**
+1a/1b. While partitioned, Node A and Node B each keep serving their own (different) view of the registry — both remain available, per the AP choice.
+2. Once the network partition heals, both nodes attempt to reconcile via Raft.
+3. Raft consensus determines the authoritative state from the majority side.
+4. Whichever side was the minority during the partition discards any writes that conflict with the majority's history.
 
 For service discovery (eventual consistency tolerated), partition-time divergence is
 acceptable. Registration on the minority side may need to be re-submitted after healing.
