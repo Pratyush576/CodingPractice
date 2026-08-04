@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Booking Service</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Booking Service</h1>
+  <div id="accountBar" class="account-bar hidden">
+    <span id="accountInfo"></span>
+    <button id="logoutBtn" type="button">Log out</button>
+  </div>
+</header>
+
+<main id="authSection">
+  <section id="authCard">
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-tab="login">Log in</button>
+      <button type="button" class="auth-tab" data-tab="register">Create account</button>
+    </div>
+
+    <form id="loginForm" class="auth-form">
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+      <button type="submit">Log in</button>
+      <div id="loginResult" class="form-result"></div>
+    </form>
+
+    <form id="registerForm" class="auth-form hidden">
+      <label>Company (tenant)
+        <select id="tenantSelect" required>
+          <option value="" disabled selected>Loading…</option>
+        </select>
+      </label>
+      <label id="newTenantLabel" class="hidden">New tenant ID
+        <input id="newTenantInput" placeholder="acme-corp">
+      </label>
+      <label>Account type
+        <select name="role" required>
+          <option value="SHIPPER">Shipper — creates &amp; manages own bookings</option>
+          <option value="OPERATOR">Operator — manages all bookings for the tenant</option>
+        </select>
+      </label>
+      <label>Full name <input name="name" required></label>
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+      <button type="submit">Create account</button>
+      <div id="registerResult" class="form-result"></div>
+    </form>
+  </section>
+</main>
+
+<main id="appSection" class="hidden">
+  <div id="shipperTabs" class="section-tabs hidden">
+    <button type="button" class="section-tab active" data-target="createSection">Create Booking</button>
+    <button type="button" class="section-tab" data-target="manageSection">My Bookings</button>
+  </div>
+  <div id="operatorTabs" class="section-tabs hidden">
+    <button type="button" class="section-tab active" data-target="manageSection">Bookings</button>
+    <button type="button" class="section-tab" data-target="supplySection">Supply</button>
+  </div>
+
+  <section id="createSection" class="hidden">
+    <h2>Create Booking <span class="role">Shipper</span></h2>
+    <form id="createForm">
+      <div class="form-row">
+        <label>Mode preference
+          <select name="modePreference" required>
+            <option value="OCEAN">OCEAN</option>
+            <option value="AIR">AIR</option>
+            <option value="ROAD_FTL">ROAD_FTL</option>
+            <option value="ROAD_LTL">ROAD_LTL</option>
+            <option value="RAIL">RAIL</option>
+            <option value="PARCEL">PARCEL</option>
+            <option value="INTERMODAL">INTERMODAL</option>
+            <option value="ANY">ANY</option>
+          </select>
+        </label>
+        <label>Incoterm
+          <select name="incoterm" required>
+            <option value="FOB">FOB</option>
+            <option value="EXW">EXW</option>
+            <option value="FCA">FCA</option>
+            <option value="CPT">CPT</option>
+            <option value="CIP">CIP</option>
+            <option value="DAP">DAP</option>
+            <option value="DPU">DPU</option>
+            <option value="DDP">DDP</option>
+            <option value="FAS">FAS</option>
+            <option value="CFR">CFR</option>
+            <option value="CIF">CIF</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label>Load type
+          <select name="loadType" required>
+            <option value="FCL">FCL</option>
+            <option value="LCL">LCL</option>
+            <option value="BREAKBULK">BREAKBULK</option>
+          </select>
+        </label>
+        <label>Contract ID <input name="contractId" placeholder="optional"></label>
+      </div>
+
+      <div class="form-row">
+        <label>Origin node <input name="originNodeId" placeholder="CNSHA" required></label>
+        <label>Destination node <input name="destinationNodeId" placeholder="USORD" required></label>
+      </div>
+
+      <div class="form-row">
+        <label>Consignee ID <input name="consigneeId" required></label>
+        <label>Notify party <input name="notifyPartyId" placeholder="optional"></label>
+      </div>
+
+      <div class="form-row">
+        <label>Required pickup by <input type="datetime-local" name="requiredPickupBy"></label>
+        <label>Required delivery by <input type="datetime-local" name="requiredDeliveryBy"></label>
+      </div>
+
+      <div class="form-row">
+        <label>Total weight (kg) <input type="number" step="any" name="totalWeightKg" placeholder="LCL/Breakbulk"></label>
+        <label>Total volume (cbm) <input type="number" step="any" name="totalVolumeCbm" placeholder="LCL/Breakbulk"></label>
+      </div>
+
+      <fieldset>
+        <legend>Container requirements (FCL)</legend>
+        <div id="containerReqs"></div>
+        <button type="button" id="addContainerReq">+ Add container</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Cargo line items (at least one required)</legend>
+        <div id="cargoLines"></div>
+        <button type="button" id="addCargoLine">+ Add cargo line</button>
+      </fieldset>
+
+      <button type="submit">Create draft</button>
+      <div id="createResult"></div>
+    </form>
+  </section>
+
+  <section id="manageSection" class="hidden">
+    <h2 id="bookingsSectionTitle">Bookings <span class="role" id="bookingsSectionRole">Operator</span></h2>
+    <div class="toolbar">
+      <label>Status
+        <select id="statusFilter">
+          <option value="">All</option>
+          <option value="DRAFT" id="statusFilterDraft">DRAFT</option>
+          <option value="SUBMITTED">SUBMITTED</option>
+          <option value="CONFIRMED">CONFIRMED</option>
+          <option value="CANCELLED">CANCELLED</option>
+        </select>
+      </label>
+      <button id="refreshBtn" type="button">Refresh</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Booking</th><th>Shipper</th><th>Status</th><th>Mode</th><th>Incoterm</th><th>Route</th><th>v</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="bookingsBody"></tbody>
+    </table>
+
+    <div id="candidatesPanel" class="hidden">
+      <h3>Candidate offerings for <span id="candidatesBookingId"></span></h3>
+      <table>
+        <thead><tr><th>Offering</th><th>Route</th><th>Capacity available</th><th>Rate</th><th></th></tr></thead>
+        <tbody id="candidatesBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="supplySection" class="hidden">
+    <h2>Supply <span class="role">Operator</span></h2>
+    <form id="offeringForm">
+      <div class="form-row">
+        <label>Mode
+          <select name="mode" required>
+            <option value="OCEAN">OCEAN</option>
+            <option value="AIR">AIR</option>
+            <option value="ROAD_FTL">ROAD_FTL</option>
+            <option value="ROAD_LTL">ROAD_LTL</option>
+            <option value="RAIL">RAIL</option>
+            <option value="PARCEL">PARCEL</option>
+            <option value="INTERMODAL">INTERMODAL</option>
+          </select>
+        </label>
+        <label>Rate amount <input type="number" step="any" name="rateAmount" placeholder="e.g. 2500" required></label>
+      </div>
+
+      <div class="form-row">
+        <label>Origin node <input name="originNodeId" placeholder="CNSHA" required></label>
+        <label>Destination node <input name="destinationNodeId" placeholder="USORD" required></label>
+      </div>
+
+      <div class="form-row">
+        <label>Rate currency <input name="rateCurrency" placeholder="USD" required></label>
+        <label></label>
+      </div>
+
+      <div class="form-row">
+        <label>Valid from <input type="datetime-local" name="validFrom"></label>
+        <label>Valid until <input type="datetime-local" name="validUntil"></label>
+      </div>
+
+      <div class="form-row">
+        <label>Total weight (kg) <input type="number" step="any" name="totalWeightKg" placeholder="for LCL/Breakbulk demand"></label>
+        <label>Total volume (cbm) <input type="number" step="any" name="totalVolumeCbm" placeholder="for LCL/Breakbulk demand"></label>
+      </div>
+
+      <fieldset>
+        <legend>Container capacity (for FCL demand)</legend>
+        <div id="offeringContainers"></div>
+        <button type="button" id="addOfferingContainer">+ Add container type</button>
+      </fieldset>
+
+      <button type="submit">Create offering</button>
+      <div id="offeringResult"></div>
+    </form>
+
+    <h3>Your Offerings</h3>
+    <table>
+      <thead>
+        <tr><th>Offering</th><th>Mode</th><th>Route</th><th>Capacity</th><th>Rate</th><th>Status</th></tr>
+      </thead>
+      <tbody id="offeringsBody"></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

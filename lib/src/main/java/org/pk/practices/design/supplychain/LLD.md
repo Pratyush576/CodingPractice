@@ -79,9 +79,9 @@ says "PostgreSQL" or "Redis" rather than re-justifying it thirteen times.
 
 | Concern | Technology | Why this, specifically |
 |---|---|---|
-| Language / framework | Java 21, Spring Boot 3 | Matches the repo; Spring's DI fits "depend on interfaces, not concretes" directly, and its `@KafkaListener`/`@Transactional` cut a lot of the plumbing below to annotations |
+| Language / framework | Java 23, plain Java + [Javalin](https://javalin.io) | Actually matches the repo — every other practice here (locking, service-discovery, bloom filter, EDI, REST/gRPC/GraphQL/WebSocket demos) is plain Java with no framework. An earlier draft of this table said "Spring Boot 3 — matches the repo," which didn't hold up once checked against the codebase; corrected after the first real implementation slice (`supplychain/`, §2 Booking Service) was built the same way. The trade given up is Spring's `@Transactional`/`@KafkaListener` convenience — the outbox transaction and the Kafka poll loop below are both hand-written as a result ([§1.3](#13-consistency-mechanisms)) |
 | Synchronous inter-service calls | Direct method call (monolith phase) → gRPC (once decomposed, [§8](DESIGN.md#8-major-design-decisions--trade-offs)) | Type-safe and low-overhead, which matters specifically for Matching↔Planning↔Contract — three hops on the booking-confirmation critical path, budgeted at < 2s end to end ([§1](DESIGN.md#1-requirements)) |
-| External-facing APIs | REST/JSON over HTTPS | Portals and partner integrations need broad client compatibility; gRPC's tooling requirement is the wrong trade for a shipper's browser session or a carrier's ops team writing a webhook integration |
+| External-facing APIs | REST/JSON over HTTPS ([Javalin](https://javalin.io) + embedded Jetty) | Portals and partner integrations need broad client compatibility; gRPC's tooling requirement is the wrong trade for a shipper's browser session or a carrier's ops team writing a webhook integration |
 | Event backbone | Kafka | Already the production choice in [§5](DESIGN.md#5-event-backbone--integration-layer); ~32 partitions per [§6.5](DESIGN.md#65-capacity-math)'s math |
 | OLTP store — Booking, Contract, CapacityOffering, Plan, Leg, Invoice/Settlement | PostgreSQL, sharded via Citus/YugabyteDB once a single instance's write throughput is the bottleneck | Needs real ACID transactions and row-level CAS (`UPDATE ... WHERE version = ?`) for every optimistic-concurrency pattern in §4 below — a document store would make that harder to get right, not easier |
 | High-volume append store — Milestone stream | DynamoDB, partition key `legId`, sort key `occurredAt` | ~7,000 events/sec peak ([§6.5](DESIGN.md#65-capacity-math)) is a simple partition-and-range access pattern with no cross-record transactions needed — exactly what a relational engine is the wrong tool for at that write rate |
@@ -137,6 +137,40 @@ worth a concrete shape here is the **transactional outbox**, since every
 ---
 
 ## 2. §4.1 — Booking Service
+
+> **Implemented.** This is the one component with real code, not just this
+> design — see [`supplychain/`](../../../../../../../../../supplychain) at
+> the repo root (its own Gradle module, kept separate from `lib` so its
+> Postgres/Kafka dependencies don't bleed into every other demo). Run it with
+> `docker compose up -d` (Postgres + a single-broker Kafka) followed by
+> `./gradlew :supplychain:run`; see `supplychain/README.md`. Includes a
+> minimal browser UI (plain JS, no framework, served by Javalin itself) at
+> `http://localhost:7070/` — a Shipper create-booking form and an Operator
+> booking-management table (list/submit/amend/cancel), on top of the same
+> REST API below. There's also a `list()`/`GET /v1/bookings` beyond what's
+> documented below, added specifically for that management view. Real
+> accounts back both roles now too — a minimal instance of the `Party`/
+> `Authenticator`/`Authorizer` model in [§15](#15-14--security-authenticator--authorizer)
+> (register/login/logout, PBKDF2 password hashing, in-memory bearer-token
+> sessions); `createDraft()` derives `shipperId` from the authenticated
+> Shipper rather than trusting it from the request, and a Shipper's
+> `get`/`submit`/`amend`/`cancel`/`list` are all scoped to bookings they
+> own — an Operator's are not, and not just within one tenant: `find()`/
+> `findAll()` on `BookingRepository` dropped tenant scoping entirely, so an
+> Operator sees every booking from every tenant (see [§4](#4-41--matching-engine)'s
+> callout for why). One exception even to that: an Operator never sees a
+> `DRAFT` — still a Shipper's private, unsubmitted work, invisible to an
+> Operator via `list()`, an explicit `?status=DRAFT` filter, or a direct
+> `get()` by ID (all three come back empty/`404`, not an error). `canAccess()`
+> enforces this uniformly: a Shipper always sees their own booking regardless
+> of status; an Operator sees everything else except another party's `DRAFT`.
+> Two more methods beyond LLD's original
+> interface: `findCandidates()` (delegates straight to
+> [Matching Engine](#4-41--matching-engine)) and `reserveCapacity()`, which
+> is what actually moves a Booking from `SUBMITTED` to `CONFIRMED` in this
+> build — see §4's callout for exactly what that short-circuits (no
+> Contract Service, no Planning Engine) and the one known consistency gap
+> it introduces.
 
 **Responsibility:** validate a booking request, own the `Booking` state
 machine, and be the single point of truth for what a Booking currently is.
@@ -293,6 +327,54 @@ itself only changes a few times a day.
 ---
 
 ## 4. §4.1 — Matching Engine
+
+> **Implemented — with real simplifications, not the full design.** See
+> `supplychain/` (`matching/` package).
+>
+> **Cross-tenant, on purpose — this was a reversal, not the original design.**
+> An earlier pass built this as same-tenant (an offering's `operatorId` had to
+> share a tenant with the Booking it matched), on the reasoning that every
+> tenant-scoped query/session/row here already assumes one tenant = one
+> company. In practice that meant every ad-hoc test tenant needed its own
+> Operator account before anything in it was visible — untenable, and not
+> actually what "Operator" was meant to mean in this build. The corrected
+> model, reflected in the code now: **`OPERATOR` is a single tenant-agnostic
+> role** — any Operator account sees and can act on every Booking and every
+> `CapacityOffering`, from every tenant, no matter who created it — while
+> `SHIPPER` stays scoped to bookings they personally created, tenant or not.
+> Matching follows the same rule: `findCandidates()`/`reserve()` search
+> `capacity_offerings` across all tenants, not just the Booking's own.
+> `tenantId` still exists on both entities (which company a Booking/offering
+> belongs to is still real data, still shown), it just no longer *restricts*
+> anything for an Operator. `BookingRepository.find()`/`findAll()` and
+> `CapacityOfferingRepository.find()`/`findCandidates()` all dropped their
+> `tenantId` parameter to match — a lookup by `bookingId`/`offeringId` alone,
+> backed by a dedicated unique index on each (schema.sql), since the old
+> composite `(tenant_id, id)` primary keys can't serve an ID-only lookup
+> efficiently.
+>
+> Two further departures from the full design, both independent of the above:
+> 1. **No Contract Service in front of this** — `findCandidates()`/`reserve()`
+>    only search the spot `capacity_offerings` pool; there's no committed-volume
+>    pool from [§4.2](#5-42--contract-service) to check first.
+> 2. **No Planning Engine calling this** — `BookingService.reserveCapacity()`
+>    calls `MatchingService.reserve()` directly and, on success, transitions
+>    the Booking straight to `CONFIRMED` itself. There's no `Quote`, no
+>    `Plan`, no multi-leg routing — a Booking matches exactly one
+>    `CapacityOffering` for its entire origin→destination, not a chain of legs.
+>    This also produces **a CAS-then-CAS gap**: `reserveCapacity()` calls
+>    `MatchingEngine.reserve()` (one transaction, against `capacity_offerings`)
+>    and then `BookingRepository.save()` (a second, separate transaction,
+>    against `bookings`) to record the confirmation. If the second CAS loses a
+>    race — booking concurrently modified between the two calls — the
+>    capacity is already reserved and committed, but the Booking never
+>    reflects it. This is surfaced as a `ConflictException` telling the caller
+>    to reload, not silently swallowed, but it isn't *solved*: solving it
+>    properly needs either a saga/compensating transaction or moving both
+>    writes into one shared transaction spanning both tables, which the
+>    current `BookingRepository`/`CapacityOfferingRepository` split doesn't
+>    support. Worth fixing before this goes anywhere near production; fine for
+>    a local single-user dev tool where the race window in practice is tiny.
 
 **Responsibility:** find candidates for a Booking, and perform the one
 operation in this entire system where a race condition is a real, everyday
@@ -1096,6 +1178,20 @@ this document; Procurement's only job is producing a valid
 ---
 
 ## 15. §14 — Security: Authenticator & Authorizer
+
+> **Partially implemented.** `supplychain/` has a real, narrower version of
+> this: `Party`/`PartyRole` limited to `SHIPPER`/`OPERATOR` (not the full
+> Shipper/Consignee/Operator/Carrier/Freight-Forwarder/Customs-Broker set in
+> [§3](DESIGN.md#3-domain-model)), password auth instead of mTLS/OAuth/API-key/
+> HMAC, and an in-memory `SessionManager` issuing opaque bearer tokens instead
+> of OIDC — no identity provider, no `relaysForOperatorIds` set-containment
+> check (there's no LSP-aggregation actor yet to need it). `authorize()`'s
+> two-check shape below is real, though: role check (`PartyRole.SHIPPER` may
+> not `createDraft()` on another party's behalf) and scope check (a `SHIPPER`
+> is equality-scoped to bookings where `shipperId == partyId`; `OPERATOR` has
+> no scope restriction at all — not even a tenant boundary, per [§4](#4-41--matching-engine)'s
+> callout — the global-access case this section doesn't separately call out).
+> See `supplychain/README.md`'s Accounts section.
 
 **Responsibility:** the one gate every inbound request — external or
 internal — passes through before any of the above ever runs.
