@@ -57,7 +57,7 @@ sequenceDiagram
     Runtime->>Runtime: serialize Output to JSON
     Runtime-->>Service: response
     Service-->>Source: response
-    Note over Runtime,Handler: Runtime stays WARM for the next invocation — this is what<br/>"warm start" means; AWS reuses the same JVM/class state<br/>until it decides to recycle it
+    Note over Runtime,Handler: Runtime stays WARM for the next invocation — this is what<br/>"warm start" means. AWS reuses the same JVM/class state<br/>until it decides to recycle it
 ```
 
 Everything above the "Your handler" column is infrastructure you never write
