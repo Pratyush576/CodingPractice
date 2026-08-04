@@ -40,6 +40,13 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     // SLF4J binding — required by Javalin/Jetty for log output
     implementation("org.slf4j:slf4j-simple:2.0.13")
+
+    // AWS Lambda — handler interfaces (RequestHandler, Context) + common event
+    // shapes (APIGatewayProxyRequestEvent, etc.). No AWS SDK/credentials needed
+    // for local practice — these are just the types Lambda's runtime hands a
+    // handler at invoke time.
+    implementation("com.amazonaws:aws-lambda-java-core:1.2.3")
+    implementation("com.amazonaws:aws-lambda-java-events:3.11.4")
 }
 
 protobuf {
@@ -81,7 +88,8 @@ application {
     //   GraphQL           : org.pk.practices.design.api.graphql.GraphQlServer             (port 8082)
     //   REST              : org.pk.practices.design.api.rest.RestApiServer                (port 8081)
     //   gRPC              : org.pk.practices.design.api.grpc.client.Tester               (port 8080)
-    mainClass = "org.pk.practices.design.servicediscovery.ServiceDiscoveryDemo"
+    //   AWS Lambda        : org.pk.practices.aws.lambda.LambdaLocalDemo                   (no port — CLI)
+    mainClass = "org.pk.practices.aws.lambda.LambdaLocalDemo"
 }
 
 // -parameters embeds constructor parameter names in bytecode.

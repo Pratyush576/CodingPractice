@@ -53,6 +53,7 @@
 | 8 | [LRU Cache](#8-lru-cache) | Data Structures | Doubly-linked list + HashMap | Source |
 | 9 | [Rate Limiter](#9-rate-limiter) | Concurrency | Token Bucket algorithm | Source |
 | 10 | [DSA](#10-algorithms--data-structures) | Algorithms | Search, Trees, DP, Queues | Source |
+| 11 | [AWS Lambda](#11-aws-lambda) | Cloud / Serverless | Handler contract, event shapes, `Context` | [README](lib/src/main/java/org/pk/practices/aws/lambda/README.md) |
 
 ---
 
@@ -77,6 +78,7 @@ All entry points:
 "org.pk.practices.design.api.graphql.GraphQlServer"        // port 8082
 "org.pk.practices.design.api.rest.RestApiServer"           // port 8081
 "org.pk.practices.design.api.grpc.client.Tester"           // port 8080
+"org.pk.practices.aws.lambda.LambdaLocalDemo"               // AWS Lambda handlers (no port — CLI)
 ```
 
 ---
@@ -436,6 +438,44 @@ a long-term average rate.
 
 ---
 
+## 11. AWS Lambda
+
+**Two real handler shapes** — plain POJO in/out, and the API Gateway
+proxy-integration shape — invoked directly with no AWS account, no Docker,
+and no deployment.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Source as Event source
+    participant Service as Lambda service
+    participant Runtime as Runtime
+    participant Handler as Your handler
+
+    Source->>Service: event
+    Service->>Runtime: cold/warm start
+    Runtime->>Handler: construct
+    Service->>Runtime: invoke(event, ctx)
+    Runtime->>Handler: deserialize → handleRequest()
+    Handler-->>Runtime: returns
+    Runtime-->>Service: serialize response
+    Service-->>Source: response
+```
+
+**Key concepts:** `RequestHandler<Input, Output>` is the entire contract with
+the runtime; `Context` carries request-scoped metadata (request ID, remaining
+time budget, the CloudWatch-backed logger) that only the runtime can
+construct — so local testing needs a hand-written stand-in (`LocalContext`).
+
+```bash
+# mainClass = "org.pk.practices.aws.lambda.LambdaLocalDemo"
+./gradlew :lib:run
+```
+
+[Detailed README →](lib/src/main/java/org/pk/practices/aws/lambda/README.md)
+
+---
+
 ## Tech Stack
 
 | Layer | Technology | Version | Role |
@@ -459,6 +499,8 @@ CodingPractice/
 ├── lib/
 │   └── src/main/
 │       ├── java/org/pk/practices/
+│       │   ├── aws/
+│       │   │   └── lambda/            AWS Lambda handlers (POJO + API Gateway shapes)
 │       │   ├── design/
 │       │   │   ├── api/
 │       │   │   │   ├── grpc/          gRPC server + client + proto
@@ -492,3 +534,6 @@ CodingPractice/
 
 **"I want classic interview prep"**
 → [LRU Cache](#8-lru-cache) · [Rate Limiter](#9-rate-limiter) · [DSA](#10-algorithms--data-structures)
+
+**"I want to see a serverless/cloud compute example"**
+→ [AWS Lambda](#11-aws-lambda)
