@@ -3,7 +3,6 @@ package org.pk.practices.design.videoStreaming;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.javalin.Javalin;
 import io.javalin.http.BadRequestResponse;
-import io.javalin.http.UploadedFile;
 import io.javalin.http.staticfiles.Location;
 import org.pk.practices.aws.sqs.LocalSqsQueue;
 import org.pk.practices.aws.sqs.QueueConsumer;
@@ -14,6 +13,9 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -45,12 +47,26 @@ public class VideoStreamingConsoleServer {
         consumer.start();
 
         UploadService uploadService = new UploadService(rawStore, transcodeQueue, metadata);
+        ChunkedUploadService chunkedUploads = new ChunkedUploadService(uploadService, activityLog::add, Duration.ofMinutes(5));
         ObjectMapper mapper = new ObjectMapper();
+
+        ScheduledExecutorService sweeper = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "upload-session-sweeper");
+            t.setDaemon(true);
+            return t;
+        });
+        sweeper.scheduleAtFixedRate(chunkedUploads::sweepAbandoned, 30, 30, TimeUnit.SECONDS);
 
         Javalin app = Javalin.create(config -> {
             config.staticFiles.add("/video-console", Location.CLASSPATH);
-            config.http.maxRequestSize = 200_000_000L; // allow real video-sized uploads, not just JSON bodies
+            config.http.maxRequestSize = 200_000_000L; // ceiling on a single chunk, not the whole file — the file itself has no size limit now
         });
+
+        app.exception(ChunkedUploadService.NoSuchSessionException.class, (e, ctx) -> ctx.status(404).json(Map.of("error", e.getMessage())));
+        app.exception(ChunkedUploadService.ChecksumMismatchException.class, (e, ctx) -> ctx.status(409).json(Map.of("error", e.getMessage())));
+        app.exception(ChunkedUploadService.IncompleteUploadException.class, (e, ctx) ->
+                ctx.status(400).json(Map.of("error", e.getMessage(), "missingParts", e.missingParts)));
+        app.exception(IllegalArgumentException.class, (e, ctx) -> ctx.status(400).json(Map.of("error", e.getMessage())));
 
         app.get("/api/videos", ctx -> ctx.json(metadata.listAll()));
 
@@ -79,29 +95,46 @@ public class VideoStreamingConsoleServer {
             ctx.json(Map.of("videoId", videoId));
         });
 
-        app.post("/api/upload-file", ctx -> {
-            UploadedFile file = ctx.uploadedFile("file");
-            if (file == null) {
-                throw new BadRequestResponse("No file provided");
-            }
-            String title = ctx.formParam("title");
-            if (title == null || title.isBlank()) {
-                title = file.filename();
-            }
-            double complexity = ctx.formParamAsClass("complexity", Double.class).getOrDefault(0.3);
-            int durationSeconds = ctx.formParamAsClass("durationSeconds", Integer.class).getOrDefault(30);
-            boolean simulateTotalFailure = ctx.formParamAsClass("simulateTotalFailure", Boolean.class).getOrDefault(false);
-            String simulateResolutionFailure = blankToNull(ctx.formParam("simulateResolutionFailure"));
-            String contentType = file.contentType() != null ? file.contentType() : "video/mp4";
-            activityLog.add("Upload API: receiving real file \"" + file.filename() + "\" (" + file.size()
-                    + " bytes, contentType=" + contentType + ")");
+        // Real chunked/resumable upload protocol (§4.1) — replaces the old
+        // single-shot "read the whole file in one call" endpoint. A large
+        // file is split client-side into parts; each part is sent, checksum-
+        // verified, and tracked independently, so a network blip costs one
+        // retried part instead of restarting the whole upload, and a client
+        // that reloads the page can resume by asking /status what's missing.
 
-            String videoId = uploadService.beginUpload(title, contentType);
-            uploadService.uploadChunk(videoId, file.content().readAllBytes());
-            uploadService.completeUpload(videoId, complexity, durationSeconds, simulateTotalFailure, simulateResolutionFailure);
-            activityLog.add("Upload API: wrote raw/" + videoId + " (" + file.size()
-                    + " real bytes, this exact key is what /play serves back), enqueued transcode job, returned 202");
+        app.post("/api/uploads/init", ctx -> {
+            InitUploadRequest req = ctx.bodyAsClass(InitUploadRequest.class);
+            UploadSession session = chunkedUploads.init(req.title(), req.contentType(), req.totalSizeBytes(), req.chunkSizeBytes());
+            ctx.json(Map.of("uploadId", session.uploadId, "totalChunks", session.totalChunks, "chunkSizeBytes", session.chunkSizeBytes));
+        });
+
+        app.get("/api/uploads/{uploadId}/status", ctx -> {
+            UploadSession session = chunkedUploads.session(ctx.pathParam("uploadId"));
+            ctx.json(Map.of(
+                    "totalChunks", session.totalChunks,
+                    "receivedPartNumbers", session.receivedPartNumbers(),
+                    "missingPartNumbers", session.missingParts()));
+        });
+
+        app.put("/api/uploads/{uploadId}/parts/{partNumber}", ctx -> {
+            String uploadId = ctx.pathParam("uploadId");
+            int partNumber = Integer.parseInt(ctx.pathParam("partNumber"));
+            String checksum = ctx.header("X-Chunk-Checksum");
+            chunkedUploads.putChunk(uploadId, partNumber, ctx.bodyAsBytes(), checksum);
+            UploadSession session = chunkedUploads.session(uploadId);
+            ctx.json(Map.of("partNumber", partNumber, "receivedCount", session.receivedChunks.size(), "totalChunks", session.totalChunks));
+        });
+
+        app.post("/api/uploads/{uploadId}/complete", ctx -> {
+            CompleteUploadRequest req = ctx.bodyAsClass(CompleteUploadRequest.class);
+            String videoId = chunkedUploads.complete(ctx.pathParam("uploadId"), req.complexity(), req.durationSeconds(),
+                    req.simulateTotalFailure(), blankToNull(req.simulateResolutionFailure()));
             ctx.json(Map.of("videoId", videoId));
+        });
+
+        app.delete("/api/uploads/{uploadId}", ctx -> {
+            chunkedUploads.abort(ctx.pathParam("uploadId"));
+            ctx.status(204);
         });
 
         app.get("/api/videos/{id}/play", ctx -> {
@@ -226,6 +259,13 @@ public class VideoStreamingConsoleServer {
 
     private record UploadRequest(String title, double complexity, int durationSeconds,
                                   boolean simulateTotalFailure, String simulateResolutionFailure) {
+    }
+
+    private record InitUploadRequest(String title, String contentType, long totalSizeBytes, int chunkSizeBytes) {
+    }
+
+    private record CompleteUploadRequest(double complexity, int durationSeconds,
+                                          boolean simulateTotalFailure, String simulateResolutionFailure) {
     }
 
     private record NetworkSample(int throughputKbps, int bufferHealthMs) {

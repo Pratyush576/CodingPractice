@@ -64,8 +64,17 @@
       <input type="checkbox" id="simTotalFailure" />
       Simulate total encode failure (poison video — every attempt fails, watch it hit the DLQ after 3 retries)
     </label>
-    <p class="result-line">No file selected uploads fake placeholder bytes instead — fine for exercising the failure/DLQ paths below, but there's nothing to actually watch.</p>
+    <label class="checkbox-row">
+      <input type="checkbox" id="simCorruption" />
+      Simulate ~1 in 5 chunks corrupted in transit (tests real checksum rejection + automatic retry — only meaningful with a real file)
+    </label>
+    <p class="result-line">No file selected uploads fake placeholder bytes instead — fine for exercising the failure/DLQ paths below, but there's nothing to actually watch. A real file is uploaded in real chunks (default 2&nbsp;MB), each checksummed, resumable if you reload mid-upload.</p>
     <button id="uploadBtn" class="primary">Upload</button>
+    <button id="cancelUploadBtn" class="hidden">Cancel upload</button>
+    <div class="upload-progress hidden" id="uploadProgressWrap">
+      <progress id="uploadProgressBar" max="100" value="0"></progress>
+      <span class="mono" id="uploadProgressText"></span>
+    </div>
     <p class="result-line" id="uploadResult">&nbsp;</p>
   </section>
 

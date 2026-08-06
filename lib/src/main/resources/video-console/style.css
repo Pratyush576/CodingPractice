@@ -292,3 +292,23 @@ code {
 }
 
 .hidden-when-empty:empty { display: none; }
+
+.hidden { display: none !important; }
+
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.6rem 0;
+}
+
+.upload-progress progress {
+  flex: 1;
+  height: 0.6rem;
+  accent-color: var(--accent);
+}
+
+#cancelUploadBtn {
+  border-color: var(--error);
+  color: var(--error);
+}

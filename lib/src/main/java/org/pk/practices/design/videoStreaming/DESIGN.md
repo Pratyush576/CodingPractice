@@ -871,14 +871,16 @@ system they'd each pull in:
 ## 12. Implementation Notes
 
 The upload → transcode → ABR-manifest happy path (§4.1, §4.2, §4.4) is
-implemented as real, runnable Java in this same package —
-`VideoStreamingDemo` walks it end to end. Also implemented: the partial-
-rendition-failure path (§8.1) and the poison-video retry/DLQ path (§8.3),
-since both fall directly out of the same worker logic.
+implemented as real, runnable Java in this package. Two entry points
+exercise it: `VideoStreamingDemo` (a scripted CLI walkthrough) and
+`VideoStreamingConsoleServer` (a browser UI with a genuine chunked-upload
+protocol, covered in §12.1). Also implemented: the partial-rendition-
+failure path (§8.1) and the poison-video retry/DLQ path (§8.3), since
+both fall directly out of the same worker logic, covered in §12.2.
 
 ```mermaid
 flowchart LR
-    Demo["VideoStreamingDemo"] --> Upload["UploadService"]
+    Demo["VideoStreamingDemo /<br/>VideoStreamingConsoleServer"] --> Upload["UploadService"]
     Upload --> Raw[("ObjectStore<br/>(raw)")]
     Upload --> Queue["LocalSqsQueue<br/>(org.pk.practices.aws.sqs)"]
     Queue --> Consumer["QueueConsumer<br/>(org.pk.practices.aws.sqs)"]
@@ -896,24 +898,191 @@ flowchart LR
 
 **What's real:** the job queue is a genuine `LocalSqsQueue` with real
 visibility timeouts and real dead-lettering, not a simulation of one; the
-manifest is a syntactically valid HLS master playlist; the idempotent
-object keys, the per-title bitrate scaling, the partial-failure-still-
-goes-READY logic, and the proactive `FAILED` marking on a worker's last
-receive attempt are all the actual logic described in §4.2/§8.1/§8.3, not
-just a diagram of it. The ABR player's decisions were hand-verified
-against the algorithm in §4.4 against a specific network trace (see the
-class Javadoc in `AdaptiveBitratePlayer`).
+idempotent object keys, the per-title bitrate scaling, the
+partial-failure-still-goes-READY logic, and the proactive `FAILED`
+marking on a worker's last receive attempt are all the actual logic
+described in §4.2/§8.1/§8.3, not just a diagram of it.
 
-**What's simplified or entirely faked, deliberately:**
+### 12.1 Upload Flow — Chunked & Resumable
+
+`ChunkedUploadService` + `UploadSession` implement exactly what §4.1's
+"client-driven multipart" row describes, not a stand-in for it: the
+browser splits a real file into fixed-size parts client-side, checksums
+each one, and only re-sends what a reconnecting client is actually
+missing.
+
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Browser
+    participant Storage as localStorage
+    participant API as Console Server
+    participant Session as ChunkedUploadService
+
+    rect rgb(224, 231, 255)
+    Note over Browser,Storage: Start or resume
+    Browser->>Storage: look up saved uploadId for this file's fingerprint
+    alt no saved session
+        Browser->>API: POST /api/uploads/init (title, size, chunkSize)
+        API->>Session: create session, compute totalChunks
+        Session-->>Browser: uploadId, totalChunks
+        Browser->>Storage: save uploadId under file fingerprint
+    else saved session found
+        Browser->>API: GET /api/uploads/{id}/status
+        API-->>Browser: receivedPartNumbers, missingPartNumbers
+        Note over Browser: only the missing parts get sent below
+    end
+    end
+
+    rect rgb(254, 243, 199)
+    Note over Browser,Session: Per-part upload, checksum, retry
+    loop each missing part
+        Browser->>Browser: slice file, compute CRC32 checksum
+        Browser->>API: PUT /api/uploads/{id}/parts/{n}<br/>header X-Chunk-Checksum
+        API->>Session: verify checksum
+        alt checksum mismatch
+            Session-->>Browser: 409 rejected, part not stored
+            Browser->>Browser: wait, retry same part (up to 3 attempts)
+        else checksum OK
+            Session->>Session: store part[n] (idempotent overwrite)
+            Session-->>Browser: 200 OK, receivedCount / totalChunks
+            Browser->>Browser: advance progress bar
+        end
+    end
+    end
+
+    rect rgb(209, 250, 229)
+    Note over Browser,Session: Finalize
+    Browser->>API: POST /api/uploads/{id}/complete
+    API->>Session: all parts present.
+    Session->>Session: reassemble parts 0..N-1 strictly in order
+    Session->>API: hand off to UploadService - write raw object, enqueue transcode job
+    API-->>Browser: videoId (encoding happens off this call)
+    Browser->>Storage: clear saved uploadId
+    end
+```
+
+The three colored phases map directly onto the three things a real
+resumable upload has to handle: **deciding whether to resume** (purple —
+a fingerprint-matched `localStorage` entry plus a `/status` check, not
+just "always start over"), **moving bytes reliably** (orange — a
+checksum rejects corruption before it's ever written, and a bad part
+costs one retried PUT, not the whole file), and **finalizing exactly
+once** (green — completion is refused until every part number 0..N-1 is
+present, then reassembled in strict order regardless of what order they
+arrived in). `VideoStreamingDemo` (the CLI walkthrough) skips all of this
+and calls the simpler in-process `UploadService` directly, since there's
+no real client-server boundary to cross there.
+
+### 12.2 Transcode, Retry & Dead-Letter Flow
+
+This is `TranscodeWorker.process()`'s actual branching logic — the same
+decision tree runs whether a rendition genuinely fails or is told to fail
+via the console's simulate-failure controls.
+
+```mermaid
+flowchart TD
+    A["QueueConsumer delivers job<br/>attempt = message.receiveCount()"] --> B{"simulateTotalFailure?"}
+
+    B -->|yes| C{"attempt >= maxReceiveCount?"}
+    C -->|yes| D["Mark video FAILED in metadata<br/>(proactive, before dead-letter)"]
+    D --> E["Throw - message stays in flight"]
+    C -->|no| E
+    E --> F{"visibility timeout expires"}
+    F -->|"attempt < max"| A
+    F -->|"attempt >= max"| G[("Dead-letter queue")]
+
+    B -->|no| H["Attempt each rendition<br/>idempotent key: videoId + resolution"]
+    H --> I{"any renditions failed?"}
+    I -->|"some succeeded"| J["Write manifest with successful renditions only.<br/>Mark READY, reduced ladder"]
+    I -->|"all failed"| E
+    I -->|"none failed"| K["Write manifest with full ladder.<br/>Mark READY"]
+
+    classDef terminal fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef failure fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef process fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef dlq fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+
+    class A,H process
+    class B,C,I,F decision
+    class D,E failure
+    class J,K terminal
+    class G dlq
+```
+
+The purple diamonds are every decision point the worker actually makes;
+the red boxes are the one shared failure path (a message that stays in
+flight to redeliver, whether it failed totally or partially); the green
+boxes are the two distinct ways a job can end in `READY` — with or
+without every rendition — and the gold cylinder is the one true dead end.
+Notice the loop back into the top box: a redelivered message re-enters
+this exact same flowchart with a higher `attempt` count, which is what
+makes the "mark FAILED on the last attempt" branch reachable at all.
+
+### 12.3 Playback — Three Separate Paths
+
+Three console buttons all look like they're part of one playback
+pipeline. They aren't — this is worth a diagram specifically because it's
+easy to assume otherwise.
+
+```mermaid
+flowchart TD
+    subgraph UI["Console UI buttons"]
+        PlayBtn["Play"]
+        ManifestBtn["Manifest"]
+        SimBtn["Simulate Playback"]
+    end
+
+    PlayBtn --> PlayAPI["GET /videos/id/play"]
+    PlayAPI --> RawBytes[("raw/{videoId}<br/>ObjectStore")]
+    RawBytes --> VideoTag["real video element<br/>Range-request seeking works"]
+
+    ManifestBtn --> ManifestAPI["GET /videos/id/manifest"]
+    ManifestAPI --> ManifestText["master.m3u8 text<br/>processedStore"]
+    ManifestText -.->|references, but nothing here exists| DeadEnd["{resolution}/index.m3u8<br/>NEVER CREATED OR SERVED"]
+
+    SimBtn --> ABRAPI["POST /videos/id/simulate-playback"]
+    ABRAPI --> ABRLogic["AdaptiveBitratePlayer<br/>decision algorithm only"]
+    ABRLogic --> Decisions["list of chosen renditions<br/>NO bytes fetched or played"]
+
+    classDef button fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef real fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef fake fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef neutral fill:#6b7785,stroke:#3d454e,color:#ffffff
+
+    class PlayBtn,ManifestBtn,SimBtn button
+    class PlayAPI,RawBytes,VideoTag real
+    class DeadEnd fake
+    class ManifestAPI,ManifestText,ABRAPI,ABRLogic,Decisions neutral
+```
+
+Only the green column touches real, playable bytes — **Play** serves the
+single raw uploaded file straight through with real HTTP Range support,
+entirely bypassing renditions and the manifest. The middle column is real
+HLS-syntax *text* that dead-ends at a red box: `ManifestGenerator`
+produces syntactically valid master-playlist output, but the child
+playlists it references (`{resolution}/index.m3u8`) are never created or
+served by anything — a real HLS player pointed at this manifest would
+fetch it fine and then 404 on every rendition. The grey column is a pure
+decision-logic demonstration: `AdaptiveBitratePlayer` picks a rendition
+per network sample using the real algorithm from §4.4, hand-verified
+against a specific trace (see its class Javadoc), but never fetches or
+plays a single byte for whatever it picks.
+
+### 12.4 What's Simplified or Faked
 
 | Real system | This practice |
 |---|---|
 | An actual video codec (H.264/AV1/etc.) | A 256-byte placeholder payload per rendition — the "theoretical bytes" a real encode would produce is computed and printed, but never actually allocated or encoded |
-| HTTP/network calls between services | Plain in-process Java method calls — there is no client-server boundary anywhere in this demo |
+| A playable HLS rendition ladder (master + child playlists + segments) | Only the master playlist exists; the `{resolution}/index.m3u8` child playlists and every segment it would reference are never created or served — see the numbered breakdown above |
+| HTTP/network calls between internal services (gateway → auth/metadata/search/etc.) | Plain in-process Java method calls — there is no client-server boundary between the console server's own internal pieces. (The upload path is the one exception: that *is* real HTTP, see above.) |
 | A real object store (S3-class) | `ObjectStore` — an in-memory `ConcurrentHashMap`, no durability, no replication |
 | A sharded relational + wide-column metadata store (§4.3) | `VideoMetadataService` — one in-memory map, no sharding, no consistency model to speak of |
 | CDN, DRM, search, recommendations, gateway auth/rate-limiting | Not implemented at all — `AdaptiveBitratePlayer` reads the manifest directly from the in-memory processed store, standing in for what would otherwise be a CDN fetch |
-| A real client measuring real bandwidth/buffer | A hardcoded `int[][]` network trace fed straight into the ABR algorithm |
+| A real client measuring real bandwidth/buffer | A hardcoded `int[][]`/`DEMO_NETWORK_TRACE` fed straight into the ABR algorithm |
+| Parallel/concurrent chunk uploads | Parts are sent sequentially — the server tracks parts independently so nothing stops a smarter client from parallelizing, but the reference client in this practice doesn't |
 
 None of this is a shortcut taken by accident — the point of this slice
 was the pipeline's *shape* (async, idempotent, retryable, degrading
@@ -927,5 +1096,6 @@ a CDN, both of which are entire practices of their own.
 ```
 
 (`application.mainClass` in `lib/build.gradle.kts` currently points at
-`VideoStreamingDemo` — switch it to try any other practice's demo
-instead, per the comment block there.)
+`VideoStreamingConsoleServer` — switch it to `VideoStreamingDemo` for the
+scripted CLI walkthrough instead, or to any other practice's demo, per
+the comment block there.)
