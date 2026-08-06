@@ -892,23 +892,69 @@ entry points kept at the package root:
 `VideoStreamingDemo` and `VideoStreamingConsoleServer` stay at the
 package root as the two front doors into all of the above.
 
-```mermaid
-flowchart LR
-    Demo["VideoStreamingDemo /<br/>VideoStreamingConsoleServer"] --> Upload["UploadService"]
-    Upload --> Raw[("ObjectStore<br/>(raw)")]
-    Upload --> Queue["LocalSqsQueue<br/>(org.pk.practices.aws.sqs)"]
-    Queue --> Consumer["QueueConsumer<br/>(org.pk.practices.aws.sqs)"]
-    Consumer --> Worker["TranscodeWorker"]
-    Worker --> Proc[("ObjectStore<br/>(processed)")]
-    Worker --> Manifest["ManifestGenerator"]
-    Worker --> Meta["VideoMetadataService"]
-    Demo --> Player["AdaptiveBitratePlayer"]
+### End-to-End: Upload to Playback
 
-    classDef real fill:#2ea88f,stroke:#146b58,color:#ffffff
-    classDef reused fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
-    class Demo,Upload,Raw,Worker,Proc,Manifest,Meta,Player real
-    class Queue,Consumer reused
+Before the component-by-component deep dives below, here's the whole
+journey in one picture — and the one thing that's easy to miss without
+it: the background transcode pipeline **only gates** when Play becomes
+clickable. It doesn't feed it.
+
+```mermaid
+flowchart TD
+    subgraph Upload["1. Upload — chunked, resumable"]
+        A1["Browser slices file into parts,<br/>checksums each one"]
+        A2["PUT each part to the server<br/>(retried on checksum mismatch)"]
+        A3["POST /complete:<br/>reassemble parts in strict order"]
+        A1 --> A2 --> A3
+    end
+
+    A4[("raw/{videoId}<br/>ObjectStore — the exact uploaded bytes")]
+    A3 --> A4
+    A3 --> A5["Create VideoRecord<br/>status = PROCESSING"]
+    A3 --> A6[["Enqueue TranscodeJob<br/>on LocalSqsQueue"]]
+
+    subgraph Transcode["2. Background transcode — async, does not block playback"]
+        B1["TranscodeWorker picks up the job"]
+        B2["Encode each rendition<br/>(placeholder bytes, per-title bitrate)"]
+        B3["Build master.m3u8"]
+        B4["Mark VideoRecord<br/>status = READY"]
+        A6 --> B1 --> B2 --> B3 --> B4
+    end
+
+    B2 --> B5[("processed/{videoId}/*<br/>ObjectStore — renditions + manifest")]
+
+    B4 -.->|"gates the Play button —<br/>READY is required, but only as a signal"| C1
+
+    subgraph Playback["3. Play — reads the ORIGINAL upload, not the transcode output"]
+        C1["User clicks Play"]
+        C2["GET /videos/id/play"]
+        C3["Range-request bytes served"]
+        C4["Real &lt;video&gt; element plays it"]
+        C1 --> C2 --> C3 --> C4
+    end
+
+    C2 -.->|reads from| A4
+
+    classDef upload fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef transcode fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef playback fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+
+    class A1,A2,A3,A5 upload
+    class B1,B2,B3,B4 transcode
+    class C1,C2,C3,C4 playback
+    class A4,A6,B5 store
 ```
+
+Follow the two arrows out of **POST /complete** separately: one goes
+straight down into `raw/{videoId}` — that object never changes again, and
+it's the *only* thing `GET /play` ever reads. The other goes sideways
+into the entire orange transcode pipeline, which does real work (encodes
+every rendition, builds a manifest, updates status) but produces a
+*different* object (`processed/{videoId}/*`) that the play path never
+touches. The dotted arrow from `status = READY` to `User clicks Play` is
+the only connection between the two halves of this diagram — a boolean
+gate, not a data dependency.
 
 **What's real:** the job queue is a genuine `LocalSqsQueue` with real
 visibility timeouts and real dead-lettering, not a simulation of one; the
