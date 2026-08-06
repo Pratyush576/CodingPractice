@@ -1,4 +1,4 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.transcode;
 
 import java.util.List;
 

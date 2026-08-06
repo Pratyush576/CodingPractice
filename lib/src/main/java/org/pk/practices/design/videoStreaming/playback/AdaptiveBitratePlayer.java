@@ -1,4 +1,6 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.playback;
+
+import org.pk.practices.design.videoStreaming.metadata.ReadyRendition;
 
 import java.util.List;
 

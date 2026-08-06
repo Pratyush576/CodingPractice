@@ -1,4 +1,4 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.upload;
 
 import java.time.Duration;
 import java.time.Instant;

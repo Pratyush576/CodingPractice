@@ -1,4 +1,4 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.metadata;
 
 import java.util.Comparator;
 import java.util.List;

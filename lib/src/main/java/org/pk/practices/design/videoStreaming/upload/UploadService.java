@@ -1,7 +1,11 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.upload;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.pk.practices.aws.sqs.LocalSqsQueue;
+import org.pk.practices.design.videoStreaming.metadata.VideoMetadataService;
+import org.pk.practices.design.videoStreaming.storage.ObjectStore;
+import org.pk.practices.design.videoStreaming.transcode.BitrateLadder;
+import org.pk.practices.design.videoStreaming.transcode.TranscodeJob;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Map;

@@ -6,6 +6,16 @@ import io.javalin.http.BadRequestResponse;
 import io.javalin.http.staticfiles.Location;
 import org.pk.practices.aws.sqs.LocalSqsQueue;
 import org.pk.practices.aws.sqs.QueueConsumer;
+import org.pk.practices.design.videoStreaming.metadata.ReadyRendition;
+import org.pk.practices.design.videoStreaming.metadata.VideoMetadataService;
+import org.pk.practices.design.videoStreaming.metadata.VideoRecord;
+import org.pk.practices.design.videoStreaming.metadata.VideoStatus;
+import org.pk.practices.design.videoStreaming.playback.AdaptiveBitratePlayer;
+import org.pk.practices.design.videoStreaming.storage.ObjectStore;
+import org.pk.practices.design.videoStreaming.transcode.TranscodeWorker;
+import org.pk.practices.design.videoStreaming.upload.ChunkedUploadService;
+import org.pk.practices.design.videoStreaming.upload.UploadService;
+import org.pk.practices.design.videoStreaming.upload.UploadSession;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -122,7 +132,7 @@ public class VideoStreamingConsoleServer {
             String checksum = ctx.header("X-Chunk-Checksum");
             chunkedUploads.putChunk(uploadId, partNumber, ctx.bodyAsBytes(), checksum);
             UploadSession session = chunkedUploads.session(uploadId);
-            ctx.json(Map.of("partNumber", partNumber, "receivedCount", session.receivedChunks.size(), "totalChunks", session.totalChunks));
+            ctx.json(Map.of("partNumber", partNumber, "receivedCount", session.receivedCount(), "totalChunks", session.totalChunks));
         });
 
         app.post("/api/uploads/{uploadId}/complete", ctx -> {

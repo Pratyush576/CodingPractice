@@ -1,4 +1,4 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.storage;
 
 import java.util.List;
 import java.util.Map;

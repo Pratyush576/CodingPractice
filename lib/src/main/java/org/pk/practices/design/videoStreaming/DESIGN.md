@@ -878,6 +878,20 @@ protocol, covered in §12.1). Also implemented: the partial-rendition-
 failure path (§8.1) and the poison-video retry/DLQ path (§8.3), since
 both fall directly out of the same worker logic, covered in §12.2.
 
+The classes are split into five subpackages by concern, with the two
+entry points kept at the package root:
+
+| Subpackage | Classes | Why grouped together |
+|---|---|---|
+| `storage` | `ObjectStore` | The one piece of infrastructure every other subpackage depends on |
+| `metadata` | `VideoStatus`, `VideoRecord`, `VideoMetadataService`, `ReadyRendition` | The shared vocabulary describing a video — `ReadyRendition` lives here rather than in `transcode` because both `transcode` (produces it) and `playback` (consumes it) need to depend on it, and putting it with the thing it describes avoids a dependency between those two instead |
+| `upload` | `UploadService`, `UploadSession`, `ChunkedUploadService` | The producer side — §12.1 |
+| `transcode` | `RenditionSpec`, `BitrateLadder`, `TranscodeJob`, `TranscodeWorker` | The consumer side — §12.2 |
+| `playback` | `ManifestGenerator`, `AdaptiveBitratePlayer` | The two "playback" demonstrations that are actually decision/text logic, not bytes — §12.3 |
+
+`VideoStreamingDemo` and `VideoStreamingConsoleServer` stay at the
+package root as the two front doors into all of the above.
+
 ```mermaid
 flowchart LR
     Demo["VideoStreamingDemo /<br/>VideoStreamingConsoleServer"] --> Upload["UploadService"]
@@ -902,6 +916,141 @@ idempotent object keys, the per-title bitrate scaling, the
 partial-failure-still-goes-READY logic, and the proactive `FAILED`
 marking on a worker's last receive attempt are all the actual logic
 described in §4.2/§8.1/§8.3, not just a diagram of it.
+
+### Class Diagram
+
+The flowchart above is the quick mental model; this is the full
+structural picture — every class, its key methods, and the actual
+dependency between it and every other class, grouped into the same five
+subpackages as the table above (the two entry points sit outside any
+namespace, since they're at the package root).
+
+```mermaid
+classDiagram
+    class VideoStreamingDemo {
+        +main(args)
+    }
+    class VideoStreamingConsoleServer {
+        +main(args)
+    }
+
+    namespace storage {
+        class ObjectStore {
+            +put(key, data)
+            +get(key) byte[]
+            +keys() List~String~
+        }
+    }
+
+    namespace metadata {
+        class VideoStatus {
+            <<enumeration>>
+            PROCESSING
+            READY
+            FAILED
+        }
+        class ReadyRendition {
+            +resolution: String
+            +bitrateKbps: int
+            +objectKey: String
+        }
+        class VideoRecord {
+            +status: VideoStatus
+            +readyRenditions: List~ReadyRendition~
+            +manifestKey: String
+        }
+        class VideoMetadataService {
+            +createProcessing(id, title, contentType)
+            +markReady(id, renditions, manifestKey, failed)
+            +markFailed(id, reason)
+            +get(id) VideoRecord
+            +listAll() List~VideoRecord~
+        }
+    }
+
+    namespace upload {
+        class UploadService {
+            +beginUpload(title, contentType) String
+            +uploadChunk(videoId, chunk)
+            +completeUpload(...) String
+        }
+        class UploadSession {
+            +totalChunks: int
+            +isComplete() bool
+            +missingParts() List~int~
+            +receivedPartNumbers() List~int~
+        }
+        class ChunkedUploadService {
+            +init(...) UploadSession
+            +putChunk(uploadId, n, data, checksum)
+            +complete(uploadId, ...) String
+            +abort(uploadId)
+            +sweepAbandoned()
+        }
+    }
+
+    namespace transcode {
+        class RenditionSpec {
+            +resolution: String
+            +bitrateKbps: int
+            +codec: String
+        }
+        class BitrateLadder {
+            +standard() List~RenditionSpec~
+            +perTitle(complexity) List~RenditionSpec~
+        }
+        class TranscodeJob {
+            +renditions: List~RenditionSpec~
+            +simulateTotalFailure: bool
+            +simulateResolutionFailure: String
+        }
+        class TranscodeWorker {
+            +process(Message)
+        }
+    }
+
+    namespace playback {
+        class ManifestGenerator {
+            +buildMasterPlaylist(renditions) String
+        }
+        class AdaptiveBitratePlayer {
+            +selectNextSegment(throughput, buffer) ReadyRendition
+        }
+    }
+
+    VideoStreamingDemo ..> UploadService
+    VideoStreamingDemo ..> TranscodeWorker
+    VideoStreamingConsoleServer ..> ChunkedUploadService
+    VideoStreamingConsoleServer ..> TranscodeWorker
+
+    ChunkedUploadService o-- UploadSession : tracks
+    ChunkedUploadService ..> UploadService : delegates completion to
+
+    UploadService ..> ObjectStore : writes raw bytes
+    UploadService ..> VideoMetadataService : creates PROCESSING record
+    UploadService ..> BitrateLadder : builds ladder
+    UploadService ..> TranscodeJob : creates and enqueues
+
+    TranscodeWorker ..> ObjectStore : reads raw, writes renditions
+    TranscodeWorker ..> VideoMetadataService : marks READY / FAILED
+    TranscodeWorker ..> ManifestGenerator : builds master playlist
+    TranscodeWorker ..> TranscodeJob : deserializes
+    TranscodeWorker ..> ReadyRendition : creates on success
+
+    BitrateLadder ..> RenditionSpec : creates
+
+    ManifestGenerator ..> ReadyRendition : reads
+    AdaptiveBitratePlayer ..> ReadyRendition : reads
+```
+
+Dashed arrows (`..>`) are dependencies — "calls a method on" or "creates an
+instance of," not a field held long-term. The one solid hollow-diamond
+arrow (`o--`) is real aggregation: `ChunkedUploadService` actually holds
+and owns the `Map<String, UploadSession>` for as long as an upload is in
+progress. Relationships already obvious from a field's type in the class
+box above it (`VideoRecord.readyRenditions: List<ReadyRendition>`,
+`TranscodeJob.renditions: List<RenditionSpec>`) aren't drawn again as
+separate arrows — that would just be noise.
 
 ### 12.1 Upload Flow — Chunked & Resumable
 

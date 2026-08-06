@@ -1,7 +1,11 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.transcode;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.pk.practices.aws.sqs.Message;
+import org.pk.practices.design.videoStreaming.metadata.ReadyRendition;
+import org.pk.practices.design.videoStreaming.metadata.VideoMetadataService;
+import org.pk.practices.design.videoStreaming.playback.ManifestGenerator;
+import org.pk.practices.design.videoStreaming.storage.ObjectStore;
 
 import java.util.ArrayList;
 import java.util.List;

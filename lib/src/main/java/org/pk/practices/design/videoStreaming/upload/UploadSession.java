@@ -1,4 +1,4 @@
-package org.pk.practices.design.videoStreaming;
+package org.pk.practices.design.videoStreaming.upload;
 
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
@@ -15,12 +15,12 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class UploadSession {
 
-    final String uploadId;
-    final String title;
-    final String contentType;
-    final long totalSizeBytes;
-    final int chunkSizeBytes;
-    final int totalChunks;
+    public final String uploadId;
+    public final String title;
+    public final String contentType;
+    public final long totalSizeBytes;
+    public final int chunkSizeBytes;
+    public final int totalChunks;
     final Map<Integer, byte[]> receivedChunks = new ConcurrentHashMap<>();
     volatile Instant lastActivityAt;
 
@@ -34,15 +34,19 @@ public class UploadSession {
         this.lastActivityAt = Instant.now();
     }
 
-    boolean isComplete() {
+    public boolean isComplete() {
         return receivedChunks.size() == totalChunks;
     }
 
-    List<Integer> receivedPartNumbers() {
+    public int receivedCount() {
+        return receivedChunks.size();
+    }
+
+    public List<Integer> receivedPartNumbers() {
         return receivedChunks.keySet().stream().sorted().toList();
     }
 
-    List<Integer> missingParts() {
+    public List<Integer> missingParts() {
         List<Integer> missing = new ArrayList<>();
         for (int i = 0; i < totalChunks; i++) {
             if (!receivedChunks.containsKey(i)) {
