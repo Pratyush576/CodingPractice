@@ -89,7 +89,9 @@ application {
     //   REST              : org.pk.practices.design.api.rest.RestApiServer                (port 8081)
     //   gRPC              : org.pk.practices.design.api.grpc.client.Tester               (port 8080)
     //   AWS Lambda        : org.pk.practices.aws.lambda.LambdaLocalDemo                   (no port — CLI)
-    mainClass = "org.pk.practices.aws.lambda.LambdaLocalDemo"
+    //   AWS SQS (CLI)     : org.pk.practices.aws.sqs.SqsLocalDemo                         (no port — CLI)
+    //   AWS SQS (console) : org.pk.practices.aws.sqs.SqsConsoleServer                    (port 8084)
+    mainClass = "org.pk.practices.aws.sqs.SqsConsoleServer"
 }
 
 // -parameters embeds constructor parameter names in bytecode.

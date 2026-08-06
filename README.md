@@ -54,6 +54,8 @@
 | 9 | [Rate Limiter](#9-rate-limiter) | Concurrency | Token Bucket algorithm | Source |
 | 10 | [DSA](#10-algorithms--data-structures) | Algorithms | Search, Trees, DP, Queues | Source |
 | 11 | [AWS Lambda](#11-aws-lambda) | Cloud / Serverless | Handler contract, event shapes, `Context` | [README](lib/src/main/java/org/pk/practices/aws/lambda/README.md) |
+| 12 | [AWS SQS](#12-aws-sqs) | Cloud / Messaging | Visibility timeout, redelivery, DLQ | [README](lib/src/main/java/org/pk/practices/aws/sqs/README.md) |
+| 13 | [Video Streaming Platform](#13-video-streaming-platform) | System Design | Upload/transcode pipeline, ABR, CDN, DRM | [DESIGN](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md) |
 
 ---
 
@@ -79,6 +81,7 @@ All entry points:
 "org.pk.practices.design.api.rest.RestApiServer"           // port 8081
 "org.pk.practices.design.api.grpc.client.Tester"           // port 8080
 "org.pk.practices.aws.lambda.LambdaLocalDemo"               // AWS Lambda handlers (no port — CLI)
+"org.pk.practices.aws.sqs.SqsLocalDemo"                     // AWS SQS local queue simulator (no port — CLI)
 ```
 
 ---
@@ -476,6 +479,94 @@ construct — so local testing needs a hand-written stand-in (`LocalContext`).
 
 ---
 
+## 12. AWS SQS
+
+**A hand-rolled, in-memory queue** implementing SQS's real semantics —
+visibility timeout, at-least-once redelivery, receipt-handle invalidation,
+dead-letter queue redirect — no AWS SDK, no Docker, no network.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Available: sendMessage()
+    Available --> InFlight: receiveMessages()
+    InFlight --> Deleted: deleteMessage()
+    InFlight --> Available: timeout expires,<br/>receiveCount < max
+    InFlight --> DeadLetter: timeout expires,<br/>receiveCount >= max
+```
+
+**Key concepts:** a receipt handle is a single-use claim token minted fresh
+on every receive, not the same as the message ID — deleting with a stale
+handle (from before a redelivery) must fail. No background timer: every
+public call lazily sweeps expired in-flight messages back to `available`,
+or to the DLQ once `maxReceiveCount` is exhausted.
+
+Two ways to run it — a scripted CLI walkthrough, or a small local web UI
+shaped like the real AWS SQS console (queue picker, live counts, send/poll/
+delete/extend buttons, plus a **Start/Stop** toggle for a real background
+`QueueConsumer` that polls, processes, and deletes messages on its own —
+still no AWS anywhere behind it):
+
+```bash
+# mainClass = "org.pk.practices.aws.sqs.SqsLocalDemo"       (CLI walkthrough)
+# mainClass = "org.pk.practices.aws.sqs.SqsConsoleServer"   (web UI, port 8084)
+./gradlew :lib:run
+```
+
+[Detailed README →](lib/src/main/java/org/pk/practices/aws/sqs/README.md)
+
+---
+
+## 13. Video Streaming Platform
+
+**Design document only** — a YouTube/Netflix-shaped system design:
+upload & ingestion, transcoding pipeline, storage tiers, adaptive bitrate
+streaming, CDN/edge caching, metadata/search/recommendation, and DRM/
+security, each evaluated with a tools/technology tradeoffs table.
+
+```mermaid
+flowchart TD
+    Client["Client Apps"] --> GW["API Gateway"]
+    GW --> Upload["Upload Service"]
+    Upload --> Raw[("Raw Storage")]
+    Raw --> Queue[["Transcode Queue"]]
+    Queue --> Workers["Transcode Workers"]
+    Workers --> Proc[("Processed Storage<br/>HLS/DASH")]
+    Proc --> CDN[("CDN Edge")]
+    CDN --> Client
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gateway fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef pipeline fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef cdn fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+
+    class Client client
+    class GW gateway
+    class Upload,Raw,Queue,Workers,Proc pipeline
+    class CDN cdn
+```
+
+Blue = client, purple = API gateway (the only door in), orange = the
+async upload/transcode pipeline, gold = the CDN — note the CDN arrow
+back to the client bypasses the gateway entirely, which is what keeps
+playback traffic off the control plane. See the design doc's
+[§3.1](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md#31-walking-the-diagram--user-interaction)
+for the full walkthrough.
+
+**Key concepts:** per-title encoding ladders and H.264-first/AV1-backfill
+as the dominant efficiency levers; CMAF single-encode dual-packaging
+(HLS+DASH); hybrid throughput+buffer adaptive bitrate; tiered DRM (signed
+URLs vs. full multi-DRM) matched to content sensitivity; split SQL/NoSQL
+metadata store by write-volume shape, not one database for everything.
+
+No runnable code — see the design doc's own
+[§10](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md#10-where-this-connects-to-other-practices-in-this-repo)
+for where this connects to the SQS, rate limiter, locking, and Bloom
+filter practices already implemented elsewhere in this repo.
+
+[Detailed design →](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md)
+
+---
+
 ## Tech Stack
 
 | Layer | Technology | Version | Role |
@@ -500,7 +591,8 @@ CodingPractice/
 │   └── src/main/
 │       ├── java/org/pk/practices/
 │       │   ├── aws/
-│       │   │   └── lambda/            AWS Lambda handlers (POJO + API Gateway shapes)
+│       │   │   ├── lambda/            AWS Lambda handlers (POJO + API Gateway shapes)
+│       │   │   └── sqs/               AWS SQS local queue simulator (visibility, DLQ) + console server
 │       │   ├── design/
 │       │   │   ├── api/
 │       │   │   │   ├── grpc/          gRPC server + client + proto
@@ -511,11 +603,13 @@ CodingPractice/
 │       │   │   ├── bloomfilter/       Bloom filter + URL deduplicator
 │       │   │   ├── caching/           LRU Cache (O(1))
 │       │   │   ├── locking/           9 locking mechanisms + benchmarks
-│       │   │   └── ratelimiter/       Token Bucket rate limiter
+│       │   │   ├── ratelimiter/       Token Bucket rate limiter
+│       │   │   └── videoStreaming/    Video streaming platform DESIGN.md (no code)
 │       │   └── dsa/                   Classic algorithms & data structures
 │       ├── proto/                     Protobuf IDL files
 │       └── resources/
-│           └── graphql/               GraphQL SDL schema files
+│           ├── graphql/               GraphQL SDL schema files
+│           └── sqs-console/           SQS console UI (index.html, style.css, app.js)
 └── build.gradle.kts                   Dependencies + mainClass switcher
 ```
 
@@ -537,3 +631,9 @@ CodingPractice/
 
 **"I want to see a serverless/cloud compute example"**
 → [AWS Lambda](#11-aws-lambda)
+
+**"I want to understand how a message queue actually works internally"**
+→ [AWS SQS](#12-aws-sqs)
+
+**"I want to see a large-scale system design with real tradeoffs"**
+→ [Video Streaming Platform](#13-video-streaming-platform)
