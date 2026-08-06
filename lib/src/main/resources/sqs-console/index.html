@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SQS Console (local)</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>SQS Console <span class="local-tag">local</span></h1>
+    <p class="subtitle">org.pk.practices.aws.sqs — LocalSqsQueue, no AWS account involved</p>
+  </div>
+  <div class="queue-tabs" id="queueTabs"></div>
+</header>
+
+<main>
+  <section class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Available</div>
+      <div class="stat-value" id="statAvailable">–</div>
+      <div class="stat-hint">waiting to be received</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">In flight</div>
+      <div class="stat-value" id="statInFlight">–</div>
+      <div class="stat-hint">received, not yet deleted or expired</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Selected queue</div>
+      <div class="stat-value stat-value-text" id="statQueueName">–</div>
+      <div class="stat-hint" id="statQueueHint">&nbsp;</div>
+    </div>
+  </section>
+
+  <section class="panels">
+    <div class="panel">
+      <h2>Send a message</h2>
+      <textarea id="sendBody" rows="3" placeholder="Message body, e.g. order-42: pack 2 crates"></textarea>
+      <button id="sendBtn" class="primary">Send message</button>
+      <p class="result-line" id="sendResult">&nbsp;</p>
+    </div>
+
+    <div class="panel">
+      <h2>Poll for messages</h2>
+      <div class="field-row">
+        <label>Max messages<input type="number" id="maxMessages" value="5" min="1" max="10" /></label>
+        <label>Visibility timeout (s)<input type="number" id="visibilityTimeout" value="30" min="1" max="300" /></label>
+      </div>
+      <button id="pollBtn" class="primary">Poll for messages</button>
+      <p class="result-line" id="pollResult">&nbsp;</p>
+    </div>
+
+    <div class="panel">
+      <h2>Consumer</h2>
+      <p class="consumer-status" id="consumerStatus">–</p>
+      <button id="consumerToggleBtn" class="primary">Start consumer</button>
+      <p class="result-line">Continuously polls this queue, "processes" each
+        message (300ms simulated work), and deletes it. A body containing
+        <code>fail</code> always errors — send one to watch it get retried
+        and eventually dead-lettered.</p>
+    </div>
+  </section>
+
+  <section class="panel messages-panel">
+    <h2>Messages received in last poll</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Message ID</th>
+          <th>Body</th>
+          <th>Receives</th>
+          <th>Receipt handle</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="messagesBody">
+        <tr><td colspan="5" class="empty-row">Poll to fetch messages</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Activity log</h2>
+    <div class="activity-log" id="activityLog"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
