@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Streaming Console (local)</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Video Streaming Console <span class="local-tag">local</span></h1>
+    <p class="subtitle">org.pk.practices.design.videoStreaming — upload &rarr; transcode &rarr; ABR manifest, no AWS/CDN/codec involved</p>
+  </div>
+</header>
+
+<main>
+  <section class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Queue: Available</div>
+      <div class="stat-value" id="statAvailable">–</div>
+      <div class="stat-hint">jobs waiting for a worker</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Queue: In Flight</div>
+      <div class="stat-value" id="statInFlight">–</div>
+      <div class="stat-hint">currently being encoded</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Dead-letter Queue</div>
+      <div class="stat-value" id="statDlq">–</div>
+      <div class="stat-hint">exhausted 3 encode attempts</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Upload a video</h2>
+    <div class="field-row">
+      <label>Real video file (optional — plays back for real if given)
+        <input type="file" id="uploadFile" accept="video/*" />
+      </label>
+    </div>
+    <div class="field-row">
+      <label>Title (defaults to filename)<input type="text" id="uploadTitle" placeholder="My Vacation Video" /></label>
+      <label>Duration (s)<input type="number" id="uploadDuration" value="120" min="1" max="7200" /></label>
+    </div>
+    <div class="field-row">
+      <label>Source complexity ({0.0 static}–{1.0 high-motion}): <span id="complexityValue">0.3</span>
+        <input type="range" id="uploadComplexity" min="0" max="1" step="0.1" value="0.3" />
+      </label>
+      <label>Simulate one rendition always failing
+        <select id="simResolution">
+          <option value="">None</option>
+          <option value="240p">240p</option>
+          <option value="480p">480p</option>
+          <option value="720p">720p</option>
+          <option value="1080p">1080p</option>
+          <option value="4K">4K</option>
+        </select>
+      </label>
+    </div>
+    <label class="checkbox-row">
+      <input type="checkbox" id="simTotalFailure" />
+      Simulate total encode failure (poison video — every attempt fails, watch it hit the DLQ after 3 retries)
+    </label>
+    <p class="result-line">No file selected uploads fake placeholder bytes instead — fine for exercising the failure/DLQ paths below, but there's nothing to actually watch.</p>
+    <button id="uploadBtn" class="primary">Upload</button>
+    <p class="result-line" id="uploadResult">&nbsp;</p>
+  </section>
+
+  <section class="panel">
+    <h2>Videos</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>ID</th>
+          <th>Status</th>
+          <th>Renditions</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="videosBody">
+        <tr><td colspan="5" class="empty-row">Upload a video to get started</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Storage — what's actually sitting in each store</h2>
+    <p class="result-line">Two independent in-memory <code>ObjectStore</code>s (§4.3) — raw uploads and processed/placeholder renditions — plus the metadata map behind the Videos table above. The queue itself has no "list contents" view, on purpose: real SQS doesn't offer one either, only counts and receive. Refreshes on demand (not polled) so it doesn't flood the log below.</p>
+    <button id="refreshStorageBtn" class="small">Refresh storage snapshot</button>
+    <div class="storage-columns">
+      <div>
+        <h3>Raw objects <span class="mono" id="rawCount"></span></h3>
+        <table>
+          <thead><tr><th>Key</th><th>Size</th><th></th></tr></thead>
+          <tbody id="rawObjectsBody"><tr><td colspan="3" class="empty-row">Nothing uploaded yet</td></tr></tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Processed objects <span class="mono" id="processedCount"></span></h3>
+        <table>
+          <thead><tr><th>Key</th><th>Size</th><th></th></tr></thead>
+          <tbody id="processedObjectsBody"><tr><td colspan="3" class="empty-row">Nothing encoded yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <pre id="storagePreview" class="hidden-when-empty"></pre>
+  </section>
+
+  <section class="panel">
+    <h2>Activity log</h2>
+    <div class="activity-log" id="activityLog"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

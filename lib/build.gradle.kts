@@ -91,7 +91,9 @@ application {
     //   AWS Lambda        : org.pk.practices.aws.lambda.LambdaLocalDemo                   (no port — CLI)
     //   AWS SQS (CLI)     : org.pk.practices.aws.sqs.SqsLocalDemo                         (no port — CLI)
     //   AWS SQS (console) : org.pk.practices.aws.sqs.SqsConsoleServer                    (port 8084)
-    mainClass = "org.pk.practices.aws.sqs.SqsConsoleServer"
+    //   Video Streaming (CLI)     : org.pk.practices.design.videoStreaming.VideoStreamingDemo         (no port — CLI)
+    //   Video Streaming (console) : org.pk.practices.design.videoStreaming.VideoStreamingConsoleServer (port 8085)
+    mainClass = "org.pk.practices.design.videoStreaming.VideoStreamingConsoleServer"
 }
 
 // -parameters embeds constructor parameter names in bytecode.

@@ -82,6 +82,7 @@ All entry points:
 "org.pk.practices.design.api.grpc.client.Tester"           // port 8080
 "org.pk.practices.aws.lambda.LambdaLocalDemo"               // AWS Lambda handlers (no port — CLI)
 "org.pk.practices.aws.sqs.SqsLocalDemo"                     // AWS SQS local queue simulator (no port — CLI)
+"org.pk.practices.design.videoStreaming.VideoStreamingDemo" // Upload/transcode/ABR pipeline (no port — CLI)
 ```
 
 ---
@@ -518,10 +519,13 @@ still no AWS anywhere behind it):
 
 ## 13. Video Streaming Platform
 
-**Design document only** — a YouTube/Netflix-shaped system design:
-upload & ingestion, transcoding pipeline, storage tiers, adaptive bitrate
-streaming, CDN/edge caching, metadata/search/recommendation, and DRM/
-security, each evaluated with a tools/technology tradeoffs table.
+A YouTube/Netflix-shaped system design — upload & ingestion, transcoding
+pipeline, storage tiers, adaptive bitrate streaming, CDN/edge caching,
+metadata/search/recommendation, DRM/security, and a full distributed-
+systems reliability section — each evaluated with a tools/technology
+tradeoffs table. The upload → transcode → ABR-manifest happy path (plus
+the partial-failure and poison-video/DLQ scenarios) is also implemented
+as real, runnable Java in the same package.
 
 ```mermaid
 flowchart TD
@@ -558,10 +562,20 @@ as the dominant efficiency levers; CMAF single-encode dual-packaging
 URLs vs. full multi-DRM) matched to content sensitivity; split SQL/NoSQL
 metadata store by write-volume shape, not one database for everything.
 
-No runnable code — see the design doc's own
+The transcode job queue is a real `LocalSqsQueue` + `QueueConsumer`
+imported directly from `org.pk.practices.aws.sqs` — not a simulation of
+one — so the retry/redelivery/dead-letter behavior demonstrated there is
+literally what runs this pipeline's failure paths too. See the design
+doc's [§12](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md#12-implementation-notes)
+for exactly what's real vs. simplified, and
 [§10](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md#10-where-this-connects-to-other-practices-in-this-repo)
-for where this connects to the SQS, rate limiter, locking, and Bloom
-filter practices already implemented elsewhere in this repo.
+for the rate limiter, locking, and Bloom filter connections that remain
+design-only.
+
+```bash
+# mainClass = "org.pk.practices.design.videoStreaming.VideoStreamingDemo"
+./gradlew :lib:run
+```
 
 [Detailed design →](lib/src/main/java/org/pk/practices/design/videoStreaming/DESIGN.md)
 
@@ -604,7 +618,7 @@ CodingPractice/
 │       │   │   ├── caching/           LRU Cache (O(1))
 │       │   │   ├── locking/           9 locking mechanisms + benchmarks
 │       │   │   ├── ratelimiter/       Token Bucket rate limiter
-│       │   │   └── videoStreaming/    Video streaming platform DESIGN.md (no code)
+│       │   │   └── videoStreaming/    DESIGN.md + upload/transcode/ABR pipeline demo
 │       │   └── dsa/                   Classic algorithms & data structures
 │       ├── proto/                     Protobuf IDL files
 │       └── resources/

@@ -7,10 +7,16 @@ justified since content is curated, not endless). This document designs
 for the shared core — upload, transcode, store, deliver, play, secure —
 and calls out where the two products' priorities diverge.
 
-**Deliverable:** Design only — requirements, architecture, component
-deep-dives with tool/technology tradeoffs, data model, and diagrams. No
-runnable code in this package; see [§10](#10-where-this-connects-to-other-practices-in-this-repo)
-for pieces of this design already implemented elsewhere in the repo.
+**Deliverable:** This started as design-only — requirements, architecture,
+component deep-dives with tool/technology tradeoffs, data model, and
+diagrams. It now also has a **runnable slice**: the upload → transcode →
+ABR-manifest happy path from §4.1/§4.2/§4.4, including the partial-
+rendition-failure and poison-video/DLQ scenarios from §8.1/§8.3, as real
+Java in this same package — see [§12](#12-implementation-notes) for
+exactly what's real vs. simplified, and [§10](#10-where-this-connects-to-other-practices-in-this-repo)
+for what it reuses from elsewhere in the repo. Everything else in this
+document (CDN, DRM, search/recommendation, the full reliability section)
+remains design-only.
 
 ---
 
@@ -27,6 +33,7 @@ for pieces of this design already implemented elsewhere in the repo.
 9. [NFR Traceability](#9-nfr-traceability)
 10. [Where This Connects to Other Practices in This Repo](#10-where-this-connects-to-other-practices-in-this-repo)
 11. [Going Further](#11-going-further)
+12. [Implementation Notes](#12-implementation-notes)
 
 ---
 
@@ -807,11 +814,12 @@ larger effort rather than assumed here.
 This design deliberately reuses patterns already built and tested
 elsewhere in this repo, rather than treating them as unrelated exercises:
 
-- **[`org.pk.practices.aws.sqs`](../../aws/sqs/README.md)** — the
-  transcode job queue's retry/redelivery/dead-letter behavior is exactly
-  what `LocalSqsQueue` and `QueueConsumer` already implement and
-  demonstrate (visibility timeout, at-least-once delivery, DLQ after N
-  failures).
+- **[`org.pk.practices.aws.sqs`](../../aws/sqs/README.md)** — **actually
+  wired up**, not just a pattern match: `TranscodeWorker` in this same
+  package is a `QueueConsumer.MessageHandler` running against a real
+  `LocalSqsQueue`, so the transcode pipeline's retry/redelivery/dead-letter
+  behavior *is* `org.pk.practices.aws.sqs`, imported directly — see
+  [§12](#12-implementation-notes).
 - **[`org.pk.practices.design.ratelimiter`](../ratelimiter/)** — the
   token-bucket algorithm behind API gateway rate limiting and anti-abuse
   throttling.
@@ -829,9 +837,9 @@ elsewhere in this repo, rather than treating them as unrelated exercises:
   [§8.4](#84-timeouts-retries--circuit-breakers-between-services)'s
   circuit-breaker story.
 
-None of these are implemented *for* video streaming in this repo today —
-this section is a map from this design's components to code that already
-exists and could be adapted, not a claim that it's wired up.
+The SQS connection above is real and running; the other three are still a
+map from this design's components to code that already exists and could
+be adapted, not a claim that they're wired up.
 
 ---
 
@@ -857,3 +865,67 @@ system they'd each pull in:
   with CDN-level global reach for playback, but active-active writes for
   the control plane (so an uploader in one region isn't dependent on
   another region's metadata DB) is a further step up in complexity.
+
+---
+
+## 12. Implementation Notes
+
+The upload → transcode → ABR-manifest happy path (§4.1, §4.2, §4.4) is
+implemented as real, runnable Java in this same package —
+`VideoStreamingDemo` walks it end to end. Also implemented: the partial-
+rendition-failure path (§8.1) and the poison-video retry/DLQ path (§8.3),
+since both fall directly out of the same worker logic.
+
+```mermaid
+flowchart LR
+    Demo["VideoStreamingDemo"] --> Upload["UploadService"]
+    Upload --> Raw[("ObjectStore<br/>(raw)")]
+    Upload --> Queue["LocalSqsQueue<br/>(org.pk.practices.aws.sqs)"]
+    Queue --> Consumer["QueueConsumer<br/>(org.pk.practices.aws.sqs)"]
+    Consumer --> Worker["TranscodeWorker"]
+    Worker --> Proc[("ObjectStore<br/>(processed)")]
+    Worker --> Manifest["ManifestGenerator"]
+    Worker --> Meta["VideoMetadataService"]
+    Demo --> Player["AdaptiveBitratePlayer"]
+
+    classDef real fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef reused fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    class Demo,Upload,Raw,Worker,Proc,Manifest,Meta,Player real
+    class Queue,Consumer reused
+```
+
+**What's real:** the job queue is a genuine `LocalSqsQueue` with real
+visibility timeouts and real dead-lettering, not a simulation of one; the
+manifest is a syntactically valid HLS master playlist; the idempotent
+object keys, the per-title bitrate scaling, the partial-failure-still-
+goes-READY logic, and the proactive `FAILED` marking on a worker's last
+receive attempt are all the actual logic described in §4.2/§8.1/§8.3, not
+just a diagram of it. The ABR player's decisions were hand-verified
+against the algorithm in §4.4 against a specific network trace (see the
+class Javadoc in `AdaptiveBitratePlayer`).
+
+**What's simplified or entirely faked, deliberately:**
+
+| Real system | This practice |
+|---|---|
+| An actual video codec (H.264/AV1/etc.) | A 256-byte placeholder payload per rendition — the "theoretical bytes" a real encode would produce is computed and printed, but never actually allocated or encoded |
+| HTTP/network calls between services | Plain in-process Java method calls — there is no client-server boundary anywhere in this demo |
+| A real object store (S3-class) | `ObjectStore` — an in-memory `ConcurrentHashMap`, no durability, no replication |
+| A sharded relational + wide-column metadata store (§4.3) | `VideoMetadataService` — one in-memory map, no sharding, no consistency model to speak of |
+| CDN, DRM, search, recommendations, gateway auth/rate-limiting | Not implemented at all — `AdaptiveBitratePlayer` reads the manifest directly from the in-memory processed store, standing in for what would otherwise be a CDN fetch |
+| A real client measuring real bandwidth/buffer | A hardcoded `int[][]` network trace fed straight into the ABR algorithm |
+
+None of this is a shortcut taken by accident — the point of this slice
+was the pipeline's *shape* (async, idempotent, retryable, degrading
+gracefully) and the ABR *decision logic*, not building a video encoder or
+a CDN, both of which are entire practices of their own.
+
+## Running
+
+```bash
+./gradlew :lib:run
+```
+
+(`application.mainClass` in `lib/build.gradle.kts` currently points at
+`VideoStreamingDemo` — switch it to try any other practice's demo
+instead, per the comment block there.)
