@@ -14,27 +14,44 @@
 
 ## Architecture Map
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        CodingPractice / lib                                 │
-│                                                                             │
-│  ┌──────────────────────────────┐   ┌──────────────────────────────────┐   │
-│  │    API & Communication       │   │   Concurrency & Data Structures  │   │
-│  │  ─────────────────────────  │   │  ──────────────────────────────  │   │
-│  │  gRPC        · Protobuf IDL │   │  Locking     · 9 mechanisms      │   │
-│  │  REST        · HTTP/1.1     │   │  Bloom Filter· MurmurHash3 + CAS │   │
-│  │  GraphQL     · SDL schema   │   │  LRU Cache   · O(1) get/put      │   │
-│  │  WebSocket   · Full-duplex  │   │  Rate Limiter· Token Bucket      │   │
-│  │  EDI         · X12 850/997  │   │                                  │   │
-│  └──────────────────────────────┘   └──────────────────────────────────┘   │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                 Algorithms & Data Structures                         │   │
-│  │  ──────────────────────────────────────────────────────────────────  │   │
-│  │  Binary Search · Stack · DeQueue · Priority Queue · Heap            │   │
-│  │  Trie  ·  Trapping Rain Water  ·  Programmer's String Distance      │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Root["CodingPractice / lib"]
+        direction TB
+        subgraph API["API & Communication"]
+            direction LR
+            A1["gRPC<br/>Protobuf IDL"]
+            A2["REST<br/>HTTP/1.1"]
+            A3["GraphQL<br/>SDL schema"]
+            A4["WebSocket<br/>Full-duplex"]
+            A5["EDI<br/>X12 850/997"]
+        end
+        subgraph Concurrency["Concurrency & Data Structures"]
+            direction LR
+            C1["Locking<br/>9 mechanisms"]
+            C2["Bloom Filter<br/>MurmurHash3 + CAS"]
+            C3["LRU Cache<br/>O(1) get/put"]
+            C4["Rate Limiter<br/>Token Bucket"]
+        end
+        subgraph Algo["Algorithms & Data Structures"]
+            direction LR
+            D1["Binary Search"]
+            D2["Stack"]
+            D3["DeQueue"]
+            D4["Priority Queue"]
+            D5["Heap"]
+            D6["Trie"]
+            D7["Trapping Rain Water"]
+            D8["Programmer's String Distance"]
+        end
+    end
+
+    classDef api fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef conc fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef algo fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A1,A2,A3,A4,A5 api
+    class C1,C2,C3,C4 conc
+    class D1,D2,D3,D4,D5,D6,D7,D8 algo
 ```
 
 ---
@@ -91,14 +108,21 @@ All entry points:
 
 **Protocol:** HTTP/2 + Protocol Buffers (binary framing, multiplexed streams)
 
-```
-  Client                         Server
-    │                               │
-    │── GreeterBlockingStub ────────►│  GreetingServerImpl
-    │   ManagedChannel               │   extends GreeterImplBase
-    │   (plaintext, port 8080)       │   onNext(reply)
-    │                               │   onCompleted()
-    │◄── HelloReply ────────────────│
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Server as GreetingServerImpl<br/>extends GreeterImplBase
+
+    rect rgb(224, 231, 255)
+    Client->>Server: GreeterBlockingStub call<br/>(ManagedChannel, plaintext, port 8080)
+    end
+    rect rgb(209, 250, 229)
+    Server-->>Server: onNext(reply)
+    Server-->>Server: onCompleted()
+    Server-->>Client: HelloReply
+    end
 ```
 
 | Component | Class | Role |
@@ -124,15 +148,30 @@ All entry points:
 
 **Protocol:** HTTP/1.1 — stateless request/response over Javalin 6 (embedded Jetty)
 
-```
-  Client          Javalin Router        Handler            Store
-    │                   │                  │                  │
-    │── POST /employees ►│── ctx.body() ───►│── validate() ───►│── put()
-    │                   │                  │   BadRequest?     │
-    │◄── 201 Created ───│◄─────────────────│◄── Employee ──────│
-    │
-    │── GET /employees?department=Eng ────►│── findAll(dept) ──►│
-    │◄── 200 [Employee, ...] ─────────────│◄──────────────────│
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Router as Javalin Router
+    participant Handler
+    participant Store
+
+    rect rgb(224, 231, 255)
+    Client->>Router: POST /employees
+    Router->>Handler: ctx.body()
+    Handler->>Handler: validate() — BadRequest?
+    Handler->>Store: put()
+    Store-->>Handler: Employee
+    Handler-->>Router: 201 Created
+    Router-->>Client: 201 Created
+    end
+    rect rgb(209, 250, 229)
+    Client->>Router: GET /employees?department=Eng
+    Router->>Handler: findAll(dept)
+    Handler-->>Router: [Employee, ...]
+    Router-->>Client: 200 [Employee, ...]
+    end
 ```
 
 | Verb | Path | Status | Description |
@@ -162,13 +201,19 @@ curl -s -X POST http://localhost:8081/employees \
 
 **Protocol:** HTTP/1.1 POST — single endpoint, query language in the body
 
-```
-  POST /graphql
-  { "query": "{ employees { id name department } }" }
+```mermaid
+flowchart LR
+    A["POST /graphql<br/>{ employees { id name department } }"] --> B[SchemaParser] --> C[RuntimeWiring] --> D[GraphQL Engine] --> E[DataFetcher] --> F[(Store)]
+    D -.->|"Always HTTP 200;<br/>errors[] in body"| G["Response"]
 
-  SchemaParser → RuntimeWiring → GraphQL Engine → DataFetcher → Store
-                                      │
-                          Always HTTP 200; errors[] in body
+    classDef entry fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A entry
+    class B,C,D,E process
+    class F store
+    class G outcome
 ```
 
 **Schema-first design:**
@@ -205,15 +250,25 @@ curl -s -X POST http://localhost:8082/graphql \
 
 **Protocol:** HTTP/1.1 Upgrade → persistent full-duplex TCP — no polling, push-based
 
-```
-  Browser A                  Javalin / Jetty                  Browser B
-      │                            │                               │
-      │── GET /chat/room1 ─────────►│ (HTTP Upgrade)               │
-      │◄── 101 Switching Protocols ─│                               │
-      │                            │◄── GET /chat/room1 ──────────│
-      │                            │──► 101 Switching Protocols ──│
-      │── { type: CHAT, msg } ─────►│── broadcast to room ────────►│
-      │◄───────────────────────────│◄── { type: CHAT, msg } ──────│
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant A as Browser A
+    participant S as Javalin / Jetty
+    participant B as Browser B
+
+    rect rgb(224, 231, 255)
+    A->>S: GET /chat/room1 (HTTP Upgrade)
+    S-->>A: 101 Switching Protocols
+    B->>S: GET /chat/room1
+    S-->>B: 101 Switching Protocols
+    end
+    rect rgb(209, 250, 229)
+    A->>S: { type: CHAT, msg }
+    S->>B: broadcast { type: CHAT, msg }
+    S-->>A: broadcast { type: CHAT, msg }
+    end
 ```
 
 **Lifecycle hooks implemented:**
@@ -258,13 +313,17 @@ IEA*1*000000001~
 
 **Round-trip architecture:**
 
-```
-  Domain Object                                          EDI Wire Format
-  PurchaseOrder  ──[850Builder]──► List<EdiSegment> ──[EdiWriter]──► String
-  PurchaseOrder  ◄─[850Parser]──── List<EdiSegment> ◄─[EdiParser]──── String
-                                                          ▲
-                                          EdiDelimiters auto-detected
-                                          from ISA positions 3, 104, 105
+```mermaid
+flowchart LR
+    PO1["PurchaseOrder"] -->|"850Builder"| Seg1["List&lt;EdiSegment&gt;"] -->|"EdiWriter"| Wire["EDI Wire Format<br/>(String)"]
+    Wire -->|"EdiParser<br/>(delimiters auto-detected<br/>from ISA positions 3, 104, 105)"| Seg2["List&lt;EdiSegment&gt;"] -->|"850Parser"| PO2["PurchaseOrder"]
+
+    classDef domain fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef wire fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class PO1,PO2 domain
+    class Seg1,Seg2 process
+    class Wire wire
 ```
 
 **Two-layer design:** `EdiParser` (generic — any X12 document) → `PurchaseOrder850Parser`
@@ -382,13 +441,30 @@ READ-HEAVY (8 readers + 2 writers, 600 ms)
 **O(1) get and put** via a doubly-linked list + `HashMap` — the same strategy used
 by `LinkedHashMap` and Redis's LRU eviction.
 
-```
-  Cache state (capacity = 3):
-  HEAD ◄──► [C:3] ◄──► [B:2] ◄──► [A:1] ◄──► TAIL
-             MRU                            LRU
+```mermaid
+flowchart TD
+    subgraph S0["Initial state (capacity = 3)"]
+        direction LR
+        H0[HEAD] --- C0["C:3 (MRU)"] --- B0["B:2"] --- A0["A:1 (LRU)"] --- T0[TAIL]
+    end
+    subgraph S1["get(B) → move B to head"]
+        direction LR
+        H1[HEAD] --- B1["B:2 (MRU)"] --- C1["C:3"] --- A1["A:1 (LRU)"] --- T1[TAIL]
+    end
+    subgraph S2["put(D,4) → evict A (tail)"]
+        direction LR
+        H2[HEAD] --- D2["D:4 (MRU)"] --- B2["B:2"] --- C2["C:3 (LRU)"] --- T2[TAIL]
+    end
+    S0 --> S1 --> S2
 
-  get(B):   Move B to head → HEAD ◄──► [B:2] ◄──► [C:3] ◄──► [A:1] ◄──► TAIL
-  put(D,4): Evict A (tail) → HEAD ◄──► [D:4] ◄──► [B:2] ◄──► [C:3] ◄──► TAIL
+    classDef mru fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef mid fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef lru fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef sentinel fill:#6b7785,stroke:#3d454e,color:#ffffff
+    class C0,B1,D2 mru
+    class B0,C1,B2 mid
+    class A0,A1,C2 lru
+    class H0,T0,H1,T1,H2,T2 sentinel
 ```
 
 | Operation | Data structure | Time complexity |
@@ -406,14 +482,16 @@ by `LinkedHashMap` and Redis's LRU eviction.
 **Token Bucket algorithm** — allows short bursts up to bucket capacity while enforcing
 a long-term average rate.
 
-```
-  Token Bucket (capacity=5, refill=5 per 20s):
+```mermaid
+flowchart LR
+    T0["t=0s: full (5/5)<br/>ALLOWED → 4 left"] --> T1["t=1s: 4/5<br/>ALLOWED → 3 left"] --> T2["t=5s: 3/5<br/>3 requests ALLOWED → 0 left"] --> T3["t=6s: empty (0/5)<br/>REJECTED"] --> T4["t=20s: refilled (5/5)<br/>ALLOWED"]
 
-  t=0s:  [■■■■■]  (full)      → request ALLOWED,  bucket=[■■■■]
-  t=1s:  [■■■■]               → request ALLOWED,  bucket=[■■■]
-  t=5s:  [■■■]                → 3 requests ALLOWED, bucket=[]
-  t=6s:  []       (empty)     → request REJECTED
-  t=20s: [■■■■■]  (refilled)  → request ALLOWED
+    classDef ok fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef empty fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef refill fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class T0,T1,T2 ok
+    class T3 empty
+    class T4 refill
 ```
 
 **Key properties:**

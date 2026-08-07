@@ -443,17 +443,13 @@ consistency (e.g., auth token validation), use a direct registry read, not cache
 
 ### Check types and selection guide
 
-```
-┌─────────────────┬──────────────────────────────────────────────────────────┐
-│ Type            │ Use when                                                  │
-├─────────────────┼──────────────────────────────────────────────────────────┤
-│ Heartbeat TTL   │ Instance controls its own heartbeat; works behind NAT     │
-│ TCP connect     │ Port must be open; no app-level health guarantee          │
-│ HTTP /health    │ App-level readiness (connection pool ready, migrations done│
-│ gRPC Health     │ gRPC services; standard Health Checking Protocol          │
-│ Command exec    │ Custom scripts, legacy systems                            │
-└─────────────────┴──────────────────────────────────────────────────────────┘
-```
+| Type | Use when |
+|---|---|
+| Heartbeat TTL | Instance controls its own heartbeat; works behind NAT |
+| TCP connect | Port must be open; no app-level health guarantee |
+| HTTP /health | App-level readiness (connection pool ready, migrations done) |
+| gRPC Health | gRPC services; standard Health Checking Protocol |
+| Command exec | Custom scripts, legacy systems |
 
 ### Defence-in-depth (recommended for production)
 

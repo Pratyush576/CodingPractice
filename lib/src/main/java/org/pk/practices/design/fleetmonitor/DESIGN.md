@@ -129,50 +129,53 @@ Detection requires **data integrity scrubbing** (periodic checksummed reads) and
 
 ## 3. High-Level Architecture
 
-```
- ┌─────────────────────────────────────────────────────────────────────────────┐
- │  STORAGE SERVERS  (50,000–100,000)                                          │
- │                                                                             │
- │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   ...  ┌──────────┐ │
- │  │  mon-agent   │  │  mon-agent   │  │  mon-agent   │        │mon-agent │ │
- │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘        └────┬─────┘ │
- └─────────┼─────────────────┼─────────────────┼────────────────────┼────────┘
-           │   push (batched, compressed)       │                    │
-           ▼                                    ▼                    ▼
- ┌─────────────────────────────────────────────────────────────────────────────┐
- │  COLLECTION TIER  (per datacenter)                                          │
- │                                                                             │
- │  ┌────────────────────┐    ┌────────────────────────────────────────────┐  │
- │  │  Collector Service  │───►│  Message Queue (Kafka)                     │  │
- │  │  (load balanced)   │    │  Partitioned by server_id                  │  │
- │  └────────────────────┘    └──────────────────────┬─────────────────────┘  │
- └─────────────────────────────────────────────────────────────────────────────┘
-                                                      │
-           ┌──────────────────────────────────────────┼────────────────────┐
-           │                                          │                    │
-           ▼                                          ▼                    ▼
- ┌─────────────────┐                      ┌───────────────────┐  ┌────────────────┐
- │ Metric Writer   │                      │  Rule Engine      │  │ Anomaly Engine │
- │ (Kafka consumer)│                      │  (threshold +     │  │ (statistical + │
- │                 │                      │   trend alerts)   │  │  ML-based)     │
- └────────┬────────┘                      └─────────┬─────────┘  └───────┬────────┘
-          │                                         │                    │
-          ▼                                         └────────┬───────────┘
- ┌─────────────────────────────────────────┐                ▼
- │  TIME-SERIES STORAGE                    │     ┌──────────────────────┐
- │                                         │     │  Alert Manager       │
- │  Hot  (0–30d):  InfluxDB / Prometheus   │     │  ─ deduplication     │
- │  Warm (30d–1y): Parquet on S3           │     │  ─ correlation       │
- │  Cold (1y–7y):  Compressed archive      │     │  ─ routing           │
- └─────────────────────────────────────────┘     │  ─ notification      │
-                                                 └──────────┬───────────┘
-                                                            │
-                                              ┌─────────────┴─────────────┐
-                                              │                           │
-                                       ┌──────▼──────┐           ┌───────▼──────┐
-                                       │  PagerDuty  │           │  Slack /     │
-                                       │  On-call    │           │  Dashboard   │
-                                       └─────────────┘           └──────────────┘
+```mermaid
+flowchart TB
+    subgraph Storage["STORAGE SERVERS (50,000–100,000)"]
+        direction LR
+        A1[mon-agent]
+        A2[mon-agent]
+        A3[mon-agent]
+        A4["... mon-agent"]
+    end
+    subgraph Collection["COLLECTION TIER (per datacenter)"]
+        Collector["Collector Service<br/>(load balanced)"]
+        Kafka[("Message Queue (Kafka)<br/>Partitioned by server_id")]
+    end
+    MetricWriter["Metric Writer<br/>(Kafka consumer)"]
+    RuleEngine["Rule Engine<br/>(threshold + trend alerts)"]
+    AnomalyEngine["Anomaly Engine<br/>(statistical + ML-based)"]
+    TSStorage[("TIME-SERIES STORAGE<br/>Hot (0–30d): InfluxDB / Prometheus<br/>Warm (30d–1y): Parquet on S3<br/>Cold (1y–7y): Compressed archive")]
+    AlertManager["Alert Manager<br/>deduplication · correlation · routing · notification"]
+    PagerDuty["PagerDuty<br/>On-call"]
+    SlackDash["Slack / Dashboard"]
+
+    A1 -->|"push (batched, compressed)"| Collector
+    A2 --> Collector
+    A3 --> Collector
+    A4 --> Collector
+    Collector -->|write| Kafka
+    Kafka -->|consume| MetricWriter
+    Kafka -->|consume| RuleEngine
+    Kafka -->|consume| AnomalyEngine
+    MetricWriter --> TSStorage
+    RuleEngine --> AlertManager
+    AnomalyEngine --> AlertManager
+    AlertManager --> PagerDuty
+    AlertManager --> SlackDash
+
+    classDef agent fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef collection fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef processor fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef storage fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef alert fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef endpoint fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A1,A2,A3,A4 agent
+    class Collector,Kafka collection
+    class MetricWriter,RuleEngine,AnomalyEngine processor
+    class TSStorage storage
+    class AlertManager alert
+    class PagerDuty,SlackDash endpoint
 ```
 
 ---
@@ -184,34 +187,49 @@ Detection requires **data integrity scrubbing** (periodic checksummed reads) and
 A lightweight daemon running on **every storage server**. Written in a low-overhead
 language (Go or C). Consumes < 1% CPU and < 50 MB RAM.
 
-```
-MonitoringAgent
-  ├── Collectors  (each runs on its own goroutine/thread, independent schedule)
-  │     ├── SmartCollector        — every 30s   (hdparm / libatasmart)
-  │     ├── IoStatsCollector      — every 10s   (/proc/diskstats, /sys/block/*/stat)
-  │     ├── FilesystemCollector   — every 60s   (statvfs, /proc/mounts)
-  │     ├── HardwareCollector     — every 30s   (IPMI/BMC via ipmitool)
-  │     ├── KernelLogCollector    — continuous  (tail /dev/kmsg for I/O errors)
-  │     ├── NetworkCollector      — every 30s   (ethtool, /proc/net/dev)
-  │     └── SyntheticProbe        — every 300s  (write+read+checksum a test file)
-  │
-  ├── LocalRuleEngine  (fast path — no network round trip)
-  │     └── Critical-only rules:
-  │           uncorrectable_sectors > 0     → LOCAL_ALERT (also written to /run/monitor/alerts)
-  │           raid_state == "degraded"      → LOCAL_ALERT
-  │           filesystem_readonly == true   → LOCAL_ALERT
-  │           psu_count < 2                 → LOCAL_ALERT
-  │
-  ├── MetricBuffer  (in-memory ring buffer, 5-minute capacity)
-  │     └── On overflow OR on network partition → spill to local disk (/var/lib/mon-agent/buffer/)
-  │
-  └── Forwarder
-        ├── Batch metrics every 10s (or when buffer hits 1000 points)
-        ├── Compress with LZ4 (fast, good ratio for time-series)
-        ├── Send to regional Collector via gRPC / HTTP/2
-        ├── Exponential backoff on failure (1s → 2s → 4s → 32s max)
-        ├── Failover to secondary collector in same DC
-        └── On ACK, delete from local buffer; on no ACK, retain for retry
+```mermaid
+flowchart TD
+    Agent["MonitoringAgent"]
+    subgraph Collectors["Collectors (own goroutine/thread, independent schedule)"]
+        C1["SmartCollector — every 30s<br/>(hdparm / libatasmart)"]
+        C2["IoStatsCollector — every 10s<br/>(/proc/diskstats, /sys/block/*/stat)"]
+        C3["FilesystemCollector — every 60s<br/>(statvfs, /proc/mounts)"]
+        C4["HardwareCollector — every 30s<br/>(IPMI/BMC via ipmitool)"]
+        C5["KernelLogCollector — continuous<br/>(tail /dev/kmsg for I/O errors)"]
+        C6["NetworkCollector — every 30s<br/>(ethtool, /proc/net/dev)"]
+        C7["SyntheticProbe — every 300s<br/>(write+read+checksum a test file)"]
+    end
+    subgraph RuleEngineL["LocalRuleEngine (fast path — no network round trip)"]
+        R1["uncorrectable_sectors > 0 → LOCAL_ALERT"]
+        R2["raid_state == 'degraded' → LOCAL_ALERT"]
+        R3["filesystem_readonly == true → LOCAL_ALERT"]
+        R4["psu_count < 2 → LOCAL_ALERT"]
+    end
+    Buffer["MetricBuffer<br/>(in-memory ring buffer, 5-minute capacity)<br/>On overflow/partition → spill to local disk"]
+    subgraph Forwarder["Forwarder"]
+        F1["Batch metrics every 10s (or 1000 points)"]
+        F2["Compress with LZ4"]
+        F3["Send to regional Collector via gRPC / HTTP/2"]
+        F4["Exponential backoff on failure (1s → 2s → 4s → 32s max)"]
+        F5["Failover to secondary collector in same DC"]
+        F6["On ACK, delete from buffer; on no ACK, retain for retry"]
+    end
+
+    Agent --> Collectors
+    Agent --> RuleEngineL
+    Agent --> Buffer
+    Agent --> Forwarder
+
+    classDef root fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef collector fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef rule fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef buffer fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef forward fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class Agent root
+    class C1,C2,C3,C4,C5,C6,C7 collector
+    class R1,R2,R3,R4 rule
+    class Buffer buffer
+    class F1,F2,F3,F4,F5,F6 forward
 ```
 
 **Why local disk spill?**
@@ -230,8 +248,18 @@ can be picked up by a separate sidecar process that phones home via a different 
 
 ### 4.2 Collection Pipeline
 
-```
-Agents (50k)  ──push──►  Collector Service  ──write──►  Kafka  ──consume──►  Processors
+```mermaid
+flowchart LR
+    A["Agents (50k)"] -->|push| B["Collector Service"] -->|write| C[(Kafka)] -->|consume| D["Processors"]
+
+    classDef agent fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef collector fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef kafka fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef proc fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class A agent
+    class B collector
+    class C kafka
+    class D proc
 ```
 
 **Collector Service** (per datacenter, 3-10 nodes):
@@ -248,11 +276,16 @@ Agents (50k)  ──push──►  Collector Service  ──write──►  Kafk
 - Throughput target: 200 MB/s per DC (comfortably within Kafka's range)
 
 **Consumer groups**:
-```
-kafka topic: metrics.raw
-  ├── consumer group: metric-writer   → writes to TSDB
-  ├── consumer group: rule-engine     → evaluates alert rules
-  └── consumer group: anomaly-engine  → feeds ML pipeline
+```mermaid
+flowchart LR
+    Topic["kafka topic: metrics.raw"] --> CG1["consumer group: metric-writer<br/>→ writes to TSDB"]
+    Topic --> CG2["consumer group: rule-engine<br/>→ evaluates alert rules"]
+    Topic --> CG3["consumer group: anomaly-engine<br/>→ feeds ML pipeline"]
+
+    classDef topic fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef cg fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    class Topic topic
+    class CG1,CG2,CG3 cg
 ```
 
 Each consumer group reads the topic independently. Adding a new consumer group adds
@@ -305,20 +338,27 @@ from transient spikes.
 
 Detects deviations that threshold rules miss:
 
-```
-Input stream (per server, per metric)
-  └── Feature extraction
-        ├── Rolling mean (1h, 24h, 7d windows)
-        ├── Rolling stddev
-        ├── Rate of change
-        └── Day-of-week / hour-of-day pattern
-  └── Models (one per metric family)
-        ├── Statistical baseline: Z-score > 3σ → anomaly
-        ├── Seasonal decomposition: deviation from week-matched baseline
-        └── Isolation Forest / Prophet for long-tail failure modes
-  └── Output: anomaly score [0.0, 1.0]
-        score > 0.8 → WARNING alert
-        score > 0.95 → CRITICAL alert
+```mermaid
+flowchart TD
+    Input["Input stream (per server, per metric)"] --> FE["Feature extraction"]
+    FE --> F1["Rolling mean (1h, 24h, 7d windows)"]
+    FE --> F2["Rolling stddev"]
+    FE --> F3["Rate of change"]
+    FE --> F4["Day-of-week / hour-of-day pattern"]
+    F1 & F2 & F3 & F4 --> Models["Models (one per metric family)"]
+    Models --> M1["Statistical baseline: Z-score > 3σ → anomaly"]
+    Models --> M2["Seasonal decomposition:<br/>deviation from week-matched baseline"]
+    Models --> M3["Isolation Forest / Prophet<br/>for long-tail failure modes"]
+    M1 & M2 & M3 --> Output["Output: anomaly score [0.0, 1.0]<br/>score > 0.8 → WARNING alert<br/>score > 0.95 → CRITICAL alert"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef feature fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef model fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef output fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class Input input
+    class FE,F1,F2,F3,F4 feature
+    class Models,M1,M2,M3 model
+    class Output output
 ```
 
 **Example anomaly the rule engine misses**: A disk's reallocated sector count is 50
@@ -439,29 +479,40 @@ for routing, and suppress alerts during planned maintenance.
 
 ### 4.6 Dashboard & API
 
-```
-Fleet Overview
-  ├── Health heatmap (datacenter → rack → server → disk, colour-coded by health)
-  ├── Active alerts count by severity and datacenter
-  ├── Recent failures timeline
-  └── Trending: servers approaching failure (predictive)
+```mermaid
+flowchart TD
+    subgraph FleetOverview["Fleet Overview"]
+        FO1["Health heatmap<br/>(datacenter → rack → server → disk, colour-coded)"]
+        FO2["Active alerts count by severity and datacenter"]
+        FO3["Recent failures timeline"]
+        FO4["Trending: servers approaching failure (predictive)"]
+    end
+    subgraph ServerDrill["Server Drill-Down"]
+        SD1["All metrics for one server, last 24h"]
+        SD2["SMART attribute history<br/>(reallocated sectors over time)"]
+        SD3["Alert history"]
+        SD4["Comparison: this server vs. fleet baseline"]
+    end
+    subgraph Capacity["Capacity Planning"]
+        CP1["Days-to-full forecast per server / rack / DC"]
+        CP2["Fleet-wide aging histogram (power-on hours)"]
+    end
+    subgraph API["API (REST)"]
+        A1["GET /api/servers/{id}/health<br/>→ current health status + active alerts"]
+        A2["GET /api/servers/{id}/metrics?metric=<br/>→ time-series data"]
+        A3["GET /api/racks/{rack_id}/health<br/>→ aggregated rack health"]
+        A4["POST /api/servers/{id}/maintenance<br/>→ suppress alerts during maintenance"]
+        A5["GET /api/alerts?status=firing<br/>→ all active alerts"]
+    end
 
-Server Drill-Down
-  ├── All metrics for one server, last 24h
-  ├── SMART attribute history (graph of reallocated sectors over time)
-  ├── Alert history
-  └── Comparison: this server vs. fleet baseline
-
-Capacity Planning
-  ├── Days-to-full forecast per server / rack / DC
-  └── Fleet-wide aging histogram (servers by power-on hours)
-
-API (REST)
-  GET  /api/servers/{id}/health           → current health status + active alerts
-  GET  /api/servers/{id}/metrics?metric=  → time-series data
-  GET  /api/racks/{rack_id}/health        → aggregated rack health
-  POST /api/servers/{id}/maintenance      → put into maintenance window (suppress alerts)
-  GET  /api/alerts?status=firing          → all active alerts
+    classDef overview fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef drill fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef capacity fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef api fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class FO1,FO2,FO3,FO4 overview
+    class SD1,SD2,SD3,SD4 drill
+    class CP1,CP2 capacity
+    class A1,A2,A3,A4,A5 api
 ```
 
 ---
@@ -755,20 +806,24 @@ When MAINTENANCE_WINDOW is active for server X:
 
 ### Alert Deduplication State Machine
 
-```
-Alert state transitions:
+```mermaid
+stateDiagram-v2
+    [*] --> INACTIVE
+    INACTIVE --> PENDING : condition true
+    PENDING --> FIRING : for-duration met
+    PENDING --> RESOLVED : condition false
+    FIRING --> RESOLVED : condition false — emits RESOLVED notification
+    FIRING --> FIRING : still firing after repeat interval<br/>(e.g. 30min) — re-notify
+    RESOLVED --> INACTIVE
 
-  ┌──────────┐  condition true   ┌─────────┐  for-duration met  ┌────────┐
-  │ INACTIVE │ ─────────────────►│ PENDING │ ──────────────────►│ FIRING │
-  └──────────┘                   └─────────┘                     └───┬────┘
-       ▲                               │                             │
-       │                    condition  │                             │ condition
-       │                    false      │                             │ false
-       │                               ▼                             ▼
-       └────────────────────────── RESOLVED ◄────────────────────────┘
-
-FIRING → RESOLVED: emits a RESOLVED notification
-FIRING → FIRING (30min later): re-notify if still firing (configurable repeat interval)
+    classDef inactive fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef pending fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef firing fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef resolved fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class INACTIVE inactive
+    class PENDING pending
+    class FIRING firing
+    class RESOLVED resolved
 ```
 
 ---

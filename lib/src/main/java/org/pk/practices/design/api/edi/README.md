@@ -67,33 +67,47 @@ IEA*1*000000001~
 
 ### Envelope hierarchy
 
-```
-ISA ─── Interchange envelope (outermost)
-│         ISA06/ISA08 = sender/receiver IDs
-│         ISA13       = unique control number
-│
-└── GS ── Functional group (groups same-type transactions)
-    │        GS01 = "PO" for purchase orders, "FA" for 997 ACK
-    │
-    └── ST ── Transaction set (one business document)
-        │       ST01 = transaction type (850, 997, 810 …)
-        │
-        ├── [business segments: BEG, CUR, N1, PO1 …]
-        │
-        └── SE ── Transaction set trailer (SE01 = segment count)
-    GE ── Functional group trailer
-IEA ── Interchange trailer (must match ISA control number)
+```mermaid
+flowchart TD
+    ISA["ISA — Interchange envelope (outermost)<br/>ISA06/ISA08 = sender/receiver IDs<br/>ISA13 = unique control number"]
+    GS["GS — Functional group<br/>groups same-type transactions<br/>GS01 = 'PO' for purchase orders, 'FA' for 997 ACK"]
+    ST["ST — Transaction set (one business document)<br/>ST01 = transaction type (850, 997, 810 …)"]
+    BIZ["Business segments<br/>BEG, CUR, N1, PO1 …"]
+    SE["SE — Transaction set trailer<br/>SE01 = segment count"]
+    GE["GE — Functional group trailer"]
+    IEA["IEA — Interchange trailer<br/>must match ISA control number"]
+
+    ISA --> GS
+    GS --> ST
+    ST --> BIZ
+    ST --> SE
+    GS --> GE
+    ISA --> IEA
+
+    classDef outer fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef group fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef trans fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef biz fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class ISA,IEA outer
+    class GS,GE group
+    class ST,SE trans
+    class BIZ biz
 ```
 
 ### Segment structure
 
-```
-PO1  *  1  *  10  *  EA  *  9.99  *    *  UP  *  00012345678905  ~
- ↑   ↑  ↑     ↑     ↑      ↑    ↑  ↑     ↑      ↑
- ID  │ 01    02    03    04   05  06    07
-     │
-     element separator (*)
-                                                segment terminator (~)
+```mermaid
+flowchart LR
+    ID["PO1<br/>segment ID"] -->|"* separator"| P1["01: 1"] -->|"*"| P2["02: 10"] -->|"*"| P3["03: EA"] -->|"*"| P4["04: 9.99"] -->|"*"| P5["05: (empty)<br/>optional field"] -->|"*"| P6["06: UP"] -->|"*"| P7["07: 00012345678905"] -->|"~ terminator"| END(["end of segment"])
+
+    classDef idCls fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef elemCls fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef emptyCls fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef termCls fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class ID idCls
+    class P1,P2,P3,P4,P6,P7 elemCls
+    class P5 emptyCls
+    class END termCls
 ```
 
 Elements are referenced by segment ID + 2-digit position: **PO101**, **PO102**, etc.
@@ -105,69 +119,78 @@ Empty elements (two consecutive separators) represent optional fields.
 
 ### Two-layer design
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Application Layer  (EdiDemo, business logic)                        │
-│                                                                      │
-│  PurchaseOrder  ←──────────────────────────────►  domain objects     │
-│        ↑ parse                                       ↓ build         │
-└────────┼──────────────────────────────────────────────┼──────────────┘
-         │                                              │
-┌────────┼──────────────────────────────────────────────┼──────────────┐
-│  Translator Layer                                                     │
-│                                                                      │
-│  PurchaseOrder850Parser          PurchaseOrder850Builder              │
-│  (segments → domain)             (domain → segments)                  │
-│                                                                      │
-│  Acknowledgment997Builder                                             │
-│  (generates 997 from metadata)                                       │
-└────────┼──────────────────────────────────────────────┼──────────────┘
-         │                                              │
-┌────────┼──────────────────────────────────────────────┼──────────────┐
-│  Core Layer                                                          │
-│                                                                      │
-│  EdiParser ──────────────────►  List<EdiSegment>                     │
-│  (text → segments)                      │                            │
-│                                         │                            │
-│  EdiWriter ◄─────────────────── List<EdiSegment>                     │
-│  (segments → text)                                                   │
-│                                                                      │
-│  EdiDelimiters  (detected from ISA)                                  │
-│  EdiSegment     (id + 1-indexed elements)                            │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph AppLayer["Application Layer (EdiDemo, business logic)"]
+        Domain["PurchaseOrder<br/>domain objects"]
+    end
+    subgraph TransLayer["Translator Layer"]
+        Parser850["PurchaseOrder850Parser<br/>(segments → domain)"]
+        Builder850["PurchaseOrder850Builder<br/>(domain → segments)"]
+        Ack997["Acknowledgment997Builder<br/>(generates 997 from metadata)"]
+    end
+    subgraph CoreLayer["Core Layer"]
+        EdiParserN["EdiParser<br/>(text → segments)"]
+        EdiWriterN["EdiWriter<br/>(segments → text)"]
+        Delims["EdiDelimiters<br/>(detected from ISA)"]
+        Segment["EdiSegment<br/>(id + 1-indexed elements)"]
+    end
+
+    Domain -->|"parse"| Parser850
+    Builder850 -->|"build"| Domain
+    Parser850 --> EdiParserN
+    Builder850 --> EdiWriterN
+    EdiParserN --> Segment
+    EdiWriterN --> Segment
+    Segment -.-> Delims
+
+    classDef app fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef trans fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef core fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class Domain app
+    class Parser850,Builder850,Ack997 trans
+    class EdiParserN,EdiWriterN,Delims,Segment core
 ```
 
 ---
 
 ### Full Round-Trip Flow
 
-```
- EdiDemo              850Builder          EdiWriter           EdiParser          850Parser
-    │                     │                   │                   │                  │
-    │── build PO ────────►│                   │                   │                  │
-    │                     │── build segs ─────│                   │                  │
-    │                     │   ISA/GS/ST/BEG   │                   │                  │
-    │                     │   N1/PO1/PID      │                   │                  │
-    │                     │   CTT/SE/GE/IEA   │                   │                  │
-    │                     │──────────────────►│                   │                  │
-    │                     │                   │── write text ─────│                  │
-    │◄── EDI 850 text ────│◄──────────────────│◄──────────────────│                  │
-    │                     │                   │                   │                  │
-    │── parse ────────────│───────────────────│──────────────────►│                  │
-    │                     │                   │                   │── detect delims  │
-    │                     │                   │                   │── split segments │
-    │                     │                   │                   │── split elements │
-    │◄── ParseResult ─────│───────────────────│───────────────────│                  │
-    │                     │                   │                   │                  │
-    │── translate ────────│───────────────────│───────────────────│─────────────────►│
-    │                     │                   │                   │                  │── BEG → poNumber
-    │                     │                   │                   │                  │── N1  → buyer/seller
-    │                     │                   │                   │                  │── PO1+PID → lines
-    │◄── PurchaseOrder ───│───────────────────│───────────────────│──────────────────│
-    │                     │                   │                   │                  │
-    │── generate 997 ─────│───────────────────│───────────────────│──────────────────│
-    │   Acknowledgment997Builder                                                     │
-    │◄── EDI 997 text ────│                   │                   │                  │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Demo as EdiDemo
+    participant Builder as 850Builder
+    participant Writer as EdiWriter
+    participant Parser as EdiParser
+    participant P850 as 850Parser
+
+    rect rgb(224, 231, 255)
+    Demo->>Builder: build PO
+    Builder->>Builder: build segs<br/>(ISA/GS/ST/BEG, N1/PO1/PID, CTT/SE/GE/IEA)
+    Builder->>Writer: segments
+    Writer->>Writer: write text
+    Writer-->>Demo: EDI 850 text
+    end
+    rect rgb(254, 243, 199)
+    Demo->>Parser: parse
+    Parser->>Parser: detect delims
+    Parser->>Parser: split segments
+    Parser->>Parser: split elements
+    Parser-->>Demo: ParseResult
+    end
+    rect rgb(209, 250, 229)
+    Demo->>P850: translate
+    P850->>P850: BEG → poNumber
+    P850->>P850: N1 → buyer/seller
+    P850->>P850: PO1+PID → lines
+    P850-->>Demo: PurchaseOrder
+    end
+    rect rgb(250, 240, 210)
+    Demo->>Builder: generate 997 (Acknowledgment997Builder)
+    Builder-->>Demo: EDI 997 text
+    end
 ```
 
 ---

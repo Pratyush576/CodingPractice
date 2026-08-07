@@ -37,13 +37,17 @@ for most crawlers.
 
 ### 2.2 Data structure
 
-```
-  Bit array (m bits):
-  ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐
-  │0│1│0│0│1│0│0│1│0│0│1│0│0│0│0│1│  ← one long word (64 bits)
-  └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘
-    ↑               ↑       ↑       ↑
-    positions set by hash functions for element "example.com/page"
+```mermaid
+flowchart LR
+    subgraph BitArray["Bit array (m bits) — one long word (64 bits) shown<br/>positions set by hash functions for element 'example.com/page'"]
+        direction LR
+        B0["0"] --- B1["1"] --- B2["0"] --- B3["0"] --- B4["1"] --- B5["0"] --- B6["0"] --- B7["1"] --- B8["0"] --- B9["0"] --- B10["1"] --- B11["0"] --- B12["0"] --- B13["0"] --- B14["0"] --- B15["1"]
+    end
+
+    classDef setBit fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef unsetBit fill:#6b7785,stroke:#3d454e,color:#ffffff
+    class B1,B4,B7,B10,B15 setBit
+    class B0,B2,B3,B5,B6,B8,B9,B11,B12,B13,B14 unsetBit
 ```
 
 ### 2.3 Operations
@@ -175,18 +179,25 @@ Construction is gated behind `BloomFilterConfig.of(n, p)`, a static factory that
 
 ### 3.6 Serialization format
 
-```
-┌──────────────────────────────────────────────────────┐
-│ Header (36 bytes)                                    │
-│   [8B] expectedInsertions     long                   │
-│   [8B] falsePositiveProbability  double (raw bits)   │
-│   [8B] numBits                long                   │
-│   [4B] numHashFunctions        int                   │
-│   [8B] insertionCount          long                  │
-├──────────────────────────────────────────────────────┤
-│ Bit array (numBits/8 bytes, rounded up to 8)         │
-│   [8B × arrayLength] raw long words                  │
-└──────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Header["Header (36 bytes)"]
+        direction TB
+        H1["[8B] expectedInsertions — long"]
+        H2["[8B] falsePositiveProbability — double (raw bits)"]
+        H3["[8B] numBits — long"]
+        H4["[4B] numHashFunctions — int"]
+        H5["[8B] insertionCount — long"]
+    end
+    subgraph BitData["Bit array (numBits/8 bytes, rounded up to 8)"]
+        BD["[8B × arrayLength] raw long words"]
+    end
+    Header --> BitData
+
+    classDef header fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef data fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class H1,H2,H3,H4,H5 header
+    class BD data
 ```
 
 Storing all four config fields (including `expectedInsertions` and `falsePositiveProbability`)
@@ -197,40 +208,29 @@ to restore a filter.
 
 ## 4. Class Design
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│  Application / Use-case Layer                                      │
-│                                                                    │
-│  ┌─────────────────────────┐                                       │
-│  │  UrlDeduplicator        │  Facade over BloomFilter.             │
-│  │  - shouldCrawl(url)     │  Adds URL normalisation,              │
-│  │  - hasBeenSeen(url)     │  domain stats, crawler semantics.     │
-│  │  - printStats()         │  Pattern: Facade                      │
-│  └──────────┬──────────────┘                                       │
-└─────────────┼──────────────────────────────────────────────────────┘
-              │ delegates to
-┌─────────────┼──────────────────────────────────────────────────────┐
-│  Core Layer │                                                      │
-│             ▼                                                      │
-│  ┌─────────────────────────┐   ┌──────────────────────────┐       │
-│  │  BloomFilter            │   │  BloomFilterConfig       │       │
-│  │  - put(String)          │◄──│  - expectedInsertions    │       │
-│  │  - mightContain(String) │   │  - falsePositiveProb.    │       │
-│  │  - mergeFrom(other)     │   │  - numBits               │       │
-│  │  - writeTo / readFrom   │   │  - numHashFunctions      │       │
-│  │  AtomicLongArray bits   │   │  - estimateFpp(n)        │       │
-│  │  AtomicLong count       │   │  Pattern: Value Object   │       │
-│  │  Pattern: no pattern —  │   │          Factory Method  │       │
-│  │    raw domain object    │   └──────────────────────────┘       │
-│  └──────────┬──────────────┘                                       │
-│             │ delegates to                                          │
-│             ▼                                                      │
-│  ┌─────────────────────────┐                                       │
-│  │  MurmurHash3            │  Stateless utility. Computes           │
-│  │  - hash128(String)      │  long[]{h1, h2} via x64 128-bit       │
-│  │  - hash128(byte[])      │  MurmurHash3 algorithm.               │
-│  └─────────────────────────┘  Pattern: Utility / Strategy          │
-└────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph AppLayer["Application / Use-case Layer"]
+        UD["UrlDeduplicator<br/>shouldCrawl(url) hasBeenSeen(url) printStats()<br/>Facade over BloomFilter — URL normalization,<br/>domain stats, crawler semantics<br/>Pattern: Facade"]
+    end
+    subgraph CoreLayer["Core Layer"]
+        BF["BloomFilter<br/>put(String) mightContain(String) mergeFrom(other)<br/>writeTo / readFrom<br/>AtomicLongArray bits, AtomicLong count<br/>Pattern: no pattern — raw domain object"]
+        BFC["BloomFilterConfig<br/>expectedInsertions, falsePositiveProb.,<br/>numBits, numHashFunctions, estimateFpp(n)<br/>Pattern: Value Object + Factory Method"]
+        MH["MurmurHash3<br/>hash128(String) hash128(byte[])<br/>Stateless utility — x64 128-bit MurmurHash3<br/>Pattern: Utility / Strategy"]
+    end
+
+    UD -->|"delegates to"| BF
+    BFC -->|"configures"| BF
+    BF -->|"delegates to"| MH
+
+    classDef app fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef core fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef config fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef util fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class UD app
+    class BF core
+    class BFC config
+    class MH util
 ```
 
 ### Design patterns used

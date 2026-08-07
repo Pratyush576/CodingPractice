@@ -89,13 +89,22 @@ The protobuf compiler (`protoc`) reads this file and generates:
 
 **`server/GreetingServerImpl.java`**
 
-```
-GreeterImplBase  (generated)
-      │
-      └──  GreetingServerImpl  (your code)
-                │
-                ├── sayHello(request, responseObserver)
-                └── sayHelloAgain(request, responseObserver)
+```mermaid
+flowchart TD
+    Base["GreeterImplBase (generated)"]
+    Impl["GreetingServerImpl (your code)"]
+    M1["sayHello(request, responseObserver)"]
+    M2["sayHelloAgain(request, responseObserver)"]
+    Base --> Impl
+    Impl --> M1
+    Impl --> M2
+
+    classDef gen fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef impl fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef method fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class Base gen
+    class Impl impl
+    class M1,M2 method
 ```
 
 The gRPC framework deserializes incoming bytes into a `HelloRequest`, calls your override,
@@ -125,8 +134,18 @@ Multiple service implementations can be registered on a single `Server` instance
 
 **`client/GreetingClient.java`**
 
-```
-ManagedChannel  →  GreeterBlockingStub  →  RPC call  →  server
+```mermaid
+flowchart LR
+    A[ManagedChannel] --> B[GreeterBlockingStub] --> C["RPC call"] --> D[server]
+
+    classDef a fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef b fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef c fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef d fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A a
+    class B b
+    class C c
+    class D d
 ```
 
 | Component | Role |
@@ -152,17 +171,35 @@ for non-blocking patterns. The blocking stub is the simplest starting point.
 
 The `Tester` class starts the server and runs the client in the same JVM:
 
-```
-main thread                         client thread
-────────────────────────────────    ───────────────────────────────────
-start server on port 8080      →    (spawned)
-block on awaitTermination()         greet("Pratyush Kumar")
-                                      SayHello RPC      → server → reply logged
-                                      SayHelloAgain RPC → server → reply logged
-                                    close client channel
-                                    server.shutdown()
-awaitTermination() returns     ←
-process exits
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Main as main thread
+    participant CT as client thread
+    participant Server
+
+    rect rgb(224, 231, 255)
+    Main->>Server: start server on port 8080
+    Main->>CT: spawn
+    end
+    rect rgb(254, 243, 199)
+    par Main thread
+        Main->>Main: block on awaitTermination()
+    and Client thread
+        CT->>CT: greet("Pratyush Kumar")
+        CT->>Server: SayHello RPC
+        Server-->>CT: reply logged
+        CT->>Server: SayHelloAgain RPC
+        Server-->>CT: reply logged
+    end
+    end
+    rect rgb(209, 250, 229)
+    CT->>CT: close client channel
+    CT->>Server: server.shutdown()
+    Server-->>Main: awaitTermination() returns
+    end
+    Note over Main: process exits
 ```
 
 The client runs on a separate thread because `server.awaitTermination()` on the main thread

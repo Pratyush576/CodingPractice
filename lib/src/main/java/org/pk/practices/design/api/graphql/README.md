@@ -48,118 +48,108 @@ src/
 
 ### Component Layers
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         HTTP Client                                 │
-│              POST /graphql  { "query": "..." }                      │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  HTTP Request
-                               ▼  (Response ↑)
-┌─────────────────────────────────────────────────────────────────────┐
-│              GraphQlServer  —  port 8082                            │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  Javalin (Embedded Jetty)                                     │  │
-│  │                                                               │  │
-│  │  POST /graphql  ──►  extract query + variables from JSON      │  │
-│  │  GET  /health   ──►  "OK"                                     │  │
-│  │                                                               │  │
-│  │  ┌─────────────────┐  ┌──────────────────────────────────┐   │  │
-│  │  │ Request Logger  │  │  Exception Handler               │   │  │
-│  │  │ (every request) │  │  transport errors only → 500     │   │  │
-│  │  └─────────────────┘  └──────────────────────────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  graphQL.execute(input)
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│              graphql-java Engine  (GraphQL instance)                │
-│                                                                     │
-│  1. Parse    — tokenise query string into AST                       │
-│  2. Validate — check query against schema types and fields          │
-│  3. Execute  — walk the AST, call data fetchers for each field      │
-│                                                                     │
-│  ExecutionResult { data: {...}, errors: [...] }                     │
-└──────────────┬──────────────────────────────────────────────────────┘
-               │  field resolution calls
-       ┌───────┴────────┐
-       ▼                ▼
-┌─────────────┐  ┌──────────────────────┐
-│ QueryFetcher│  │ MutationFetcher      │
-│             │  │                      │
-│ employees() │  │ createEmployee()     │
-│ employee()  │  │ updateEmployee()     │
-│ byDept()    │  │ deleteEmployee()     │
-└──────┬──────┘  └──────────┬───────────┘
-       │                    │
-       └──────────┬─────────┘
-                  │  CRUD calls
-                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       EmployeeStore                                 │
-│                                                                     │
-│  ConcurrentHashMap<String, Employee>    AtomicLong (ID sequence)    │
-│  findAll(dept?)  findById(id)  save(emp)  delete(id)                │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Client["HTTP Client<br/>POST /graphql { 'query': '...' }"]
+    subgraph Server["GraphQlServer — port 8082"]
+        Extract["Javalin (Embedded Jetty)<br/>POST /graphql → extract query + variables from JSON<br/>GET /health → 'OK'"]
+        Logger["Request Logger<br/>(every request)"]
+        ExHandler["Exception Handler<br/>transport errors only → 500"]
+    end
+    subgraph Engine["graphql-java Engine (GraphQL instance)"]
+        Parse["1. Parse — tokenize query string into AST"]
+        Validate["2. Validate — check query against schema types and fields"]
+        Execute["3. Execute — walk the AST, call data fetchers for each field"]
+        Result["ExecutionResult { data: {...}, errors: [...] }"]
+    end
+    QF["QueryFetcher<br/>employees() employee() byDept()"]
+    MF["MutationFetcher<br/>createEmployee() updateEmployee() deleteEmployee()"]
+    Store[("EmployeeStore<br/>ConcurrentHashMap&lt;String, Employee&gt; + AtomicLong<br/>findAll(dept?) findById(id) save(emp) delete(id)")]
+
+    Client -->|"HTTP Request"| Extract
+    Extract -->|"graphQL.execute(input)"| Parse
+    Parse --> Validate --> Execute --> Result
+    Execute -->|"field resolution calls"| QF
+    Execute -->|"field resolution calls"| MF
+    QF -->|"CRUD calls"| Store
+    MF -->|"CRUD calls"| Store
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef server fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef engine fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef fetcher fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+    class Client client
+    class Extract,Logger,ExHandler server
+    class Parse,Validate,Execute,Result engine
+    class QF,MF fetcher
+    class Store store
 ```
 
 ---
 
 ### Request Lifecycle — Query (read)
 
-```
- Client              Javalin            graphql-java           QueryFetcher      Store
-   │                    │                    │                      │               │
-   │─① POST /graphql──►│                    │                      │               │
-   │  {"query":         │                    │                      │               │
-   │   "{ employees     │                    │                      │               │
-   │    { id name } }"} │                    │                      │               │
-   │                    │─② extract query──►│                      │               │
-   │                    │                   │─③ parse query AST     │               │
-   │                    │                   │─④ validate vs schema  │               │
-   │                    │                   │─⑤ execute: Query.employees            │
-   │                    │                   │──────────────────────►│               │
-   │                    │                   │                       │─⑥ findAll()─►│
-   │                    │                   │                       │◄─ [Employee]──│
-   │                    │                   │◄── [Employee] ────────│               │
-   │                    │                   │─⑦ resolve sub-fields  │               │
-   │                    │                   │   id() name() on each │               │
-   │                    │─⑧ toSpecification │                       │               │
-   │◄─ HTTP 200 ────────│                   │                       │               │
-   │  {"data":          │                   │                       │               │
-   │   {"employees":    │                   │                       │               │
-   │    [{"id":"1",     │                   │                       │               │
-   │      "name":"Alice"}]}}               │                       │               │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Javalin
+    participant GQL as graphql-java
+    participant QF as QueryFetcher
+    participant Store
+
+    rect rgb(224, 231, 255)
+    Client->>Javalin: POST /graphql { employees { id name } }
+    Javalin->>GQL: extract query
+    end
+    rect rgb(254, 243, 199)
+    GQL->>GQL: parse query AST
+    GQL->>GQL: validate vs schema
+    GQL->>QF: execute: Query.employees
+    QF->>Store: findAll()
+    Store-->>QF: [Employee]
+    QF-->>GQL: [Employee]
+    GQL->>GQL: resolve sub-fields — id() name() on each
+    end
+    rect rgb(209, 250, 229)
+    Javalin->>Javalin: toSpecification
+    Javalin-->>Client: HTTP 200 { data: { employees: [{id:"1", name:"Alice"}] } }
+    end
 ```
 
 ---
 
 ### Request Lifecycle — Mutation (write)
 
-```
- Client              Javalin            graphql-java        MutationFetcher     Store
-   │                    │                    │                      │               │
-   │─① POST /graphql──►│                    │                      │               │
-   │  {"query":         │                    │                      │               │
-   │   "mutation {      │                    │                      │               │
-   │    createEmployee( │                    │                      │               │
-   │    input:{...})    │                    │                      │               │
-   │    { id name }}"}  │                    │                      │               │
-   │                    │─② extract query──►│                      │               │
-   │                    │                   │─③ parse + validate    │               │
-   │                    │                   │─④ execute serially    │               │
-   │                    │                   │──────────────────────►│               │
-   │                    │                   │                       │─⑤ validate()  │
-   │                    │                   │                       │─⑥ nextId() ──►│
-   │                    │                   │                       │◄─ "4" ─────────│
-   │                    │                   │                       │─⑦ save(emp) ──►│
-   │                    │                   │                       │◄─ Employee ────│
-   │                    │                   │◄──── Employee ────────│               │
-   │◄─ HTTP 200 ────────│                   │                       │               │
-   │  {"data":          │                   │                       │               │
-   │   {"createEmployee"│                   │                       │               │
-   │    :{"id":"4",     │                   │                       │               │
-   │      "name":"Dave"}}}                 │                       │               │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Javalin
+    participant GQL as graphql-java
+    participant MF as MutationFetcher
+    participant Store
+
+    rect rgb(224, 231, 255)
+    Client->>Javalin: POST /graphql mutation createEmployee(input:{...}) { id name }
+    Javalin->>GQL: extract query
+    end
+    rect rgb(254, 243, 199)
+    GQL->>GQL: parse + validate
+    GQL->>MF: execute serially
+    MF->>MF: validate()
+    MF->>Store: nextId()
+    Store-->>MF: "4"
+    MF->>Store: save(emp)
+    Store-->>MF: Employee
+    MF-->>GQL: Employee
+    end
+    rect rgb(209, 250, 229)
+    Javalin-->>Client: HTTP 200 { data: { createEmployee: {id:"4", name:"Dave"} } }
+    end
 ```
 
 ---
@@ -168,20 +158,29 @@ src/
 
 GraphQL errors surface in the response body (HTTP status stays 200):
 
-```
- Client              Javalin            graphql-java        MutationFetcher
-   │                    │                    │                      │
-   │─POST /graphql─────►│─extract query─────►│─execute ────────────►│
-   │  createEmployee     │                   │                       │─validate()
-   │  name: ""           │                   │                       │  name is blank!
-   │                     │                   │                       │  throw IllegalArgumentException
-   │                     │                   │◄── exception caught ──│
-   │                     │                   │    added to errors[]  │
-   │◄─ HTTP 200 ─────────│◄──────────────────│                       │
-   │  {"data":           │                   │                       │
-   │   {"createEmployee":null},              │                       │
-   │   "errors":[{"message":"name is required",
-   │              "path":["createEmployee"]}]}
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Javalin
+    participant GQL as graphql-java
+    participant MF as MutationFetcher
+
+    rect rgb(224, 231, 255)
+    Client->>Javalin: POST /graphql createEmployee(name: "")
+    Javalin->>GQL: extract query
+    GQL->>MF: execute
+    end
+    rect rgb(255, 205, 205)
+    MF->>MF: validate() — name is blank!
+    MF-->>GQL: throw IllegalArgumentException
+    GQL->>GQL: exception caught, added to errors[]
+    end
+    rect rgb(209, 250, 229)
+    GQL-->>Javalin: ExecutionResult
+    Javalin-->>Client: HTTP 200 { data: {createEmployee:null},<br/>errors: [{message:"name is required", path:["createEmployee"]}] }
+    end
 ```
 
 ---

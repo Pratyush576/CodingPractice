@@ -42,106 +42,117 @@ src/main/java/org/pk/practices/design/api/websocket/
 
 ### Component Layers
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                  WebSocket Clients  (browser / websocat)            │
-│                                                                      │
-│   ws://localhost:8083/chat/general?username=Alice                    │
-│   ws://localhost:8083/chat/general?username=Bob                      │
-│   ws://localhost:8083/chat/engineering?username=Carol                │
-└────────────┬─────────────────────────────┬───────────────────────────┘
-             │ WS frames (full-duplex)      │
-             ▼                             ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                  ChatServer  —  port 8083                           │
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │  Javalin  /  Embedded Jetty                                    │  │
-│  │                                                                │  │
-│  │  ws://.../chat/{room}  ──►  ChatHandler                       │  │
-│  │                              onConnect / onMessage             │  │
-│  │                              onClose   / onError               │  │
-│  │                                                                │  │
-│  │  GET /health           ──►  "OK"                              │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │  join / leave / broadcast
-                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                       RoomManager                                   │
-│                                                                      │
-│   Map<roomName, Map<sessionId, WsContext>>                           │
-│                                                                      │
-│   "general"     → { "abc123" → AliceCtx, "def456" → BobCtx }       │
-│   "engineering" → { "ghi789" → CarolCtx }                           │
-│                                                                      │
-│   join(room, ctx)        leave(room, ctx)                           │
-│   broadcast(room, msg)   memberCount(room)                          │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Clients["WebSocket Clients (browser / websocat)"]
+        C1["ws://localhost:8083/chat/general?username=Alice"]
+        C2["ws://localhost:8083/chat/general?username=Bob"]
+        C3["ws://localhost:8083/chat/engineering?username=Carol"]
+    end
+    subgraph Server["ChatServer — port 8083"]
+        Route["Javalin / Embedded Jetty<br/>ws://.../chat/{room} → ChatHandler<br/>onConnect / onMessage / onClose / onError"]
+        Health["GET /health → 'OK'"]
+    end
+    subgraph RM["RoomManager"]
+        RoomMap["Map&lt;roomName, Map&lt;sessionId, WsContext&gt;&gt;<br/>'general' → { abc123→AliceCtx, def456→BobCtx }<br/>'engineering' → { ghi789→CarolCtx }"]
+        Ops["join(room,ctx)  leave(room,ctx)<br/>broadcast(room,msg)  memberCount(room)"]
+    end
+
+    C1 -->|"WS frames (full-duplex)"| Route
+    C2 -->|"WS frames (full-duplex)"| Route
+    C3 -->|"WS frames (full-duplex)"| Route
+    Route -->|"join / leave / broadcast"| RoomMap
+    RoomMap --- Ops
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef server fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef room fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class C1,C2,C3 client
+    class Route,Health server
+    class RoomMap,Ops room
 ```
 
 ---
 
 ### Connection Lifecycle
 
-```
-                 WebSocket Lifecycle
-                 ───────────────────
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Jetty as Javalin/Jetty
+    participant Handler as ChatHandler
 
-  Client                      Javalin/Jetty               ChatHandler
-    │                              │                            │
-    │── GET /chat/general ────────►│                            │
-    │   Upgrade: websocket         │                            │
-    │                              │── 101 Switching Protocols ─►│ (HTTP → WS)
-    │◄─ 101 Switching Protocols ───│                            │
-    │                              │                            │
-    │          ══ Connection open ═══════════════════════════════════════
-    │                              │                            │
-    │   (connect event fires)      │──── onConnect ────────────►│
-    │                              │                            │── store in RoomManager
-    │                              │                            │── broadcast JOIN
-    │◄══════════════ JOIN msg ═════════════════════════════════ │
-    │                              │                            │
-    │══ "Hello!" ═════════════════►│                            │
-    │   (message event fires)      │──── onMessage ────────────►│── broadcast CHAT
-    │◄══════════════ CHAT msg ═════════════════════════════════ │
-    │                              │                            │
-    │── close frame ──────────────►│                            │
-    │   (close event fires)        │──── onClose ──────────────►│── remove from room
-    │                              │                            │── broadcast LEAVE
-    │          ══ Connection closed ═════════════════════════════════════
+    rect rgb(224, 231, 255)
+    Client->>Jetty: GET /chat/general (Upgrade: websocket)
+    Jetty->>Handler: 101 Switching Protocols (HTTP → WS)
+    Jetty-->>Client: 101 Switching Protocols
+    Note over Client,Handler: Connection open
+    end
+    rect rgb(254, 243, 199)
+    Jetty->>Handler: connect event fires — onConnect
+    Handler->>Handler: store in RoomManager
+    Handler-->>Client: broadcast JOIN
+    end
+    rect rgb(209, 250, 229)
+    Client->>Jetty: "Hello!"
+    Jetty->>Handler: message event fires — onMessage
+    Handler-->>Client: broadcast CHAT
+    end
+    rect rgb(250, 240, 210)
+    Client->>Jetty: close frame
+    Jetty->>Handler: close event fires — onClose
+    Handler->>Handler: remove from room
+    Handler-->>Client: broadcast LEAVE
+    Note over Client,Handler: Connection closed
+    end
 ```
 
 ---
 
 ### Message Broadcasting (multi-client)
 
-```
-  Alice               Bob                 Carol               RoomManager
-  (general)           (general)           (engineering)
-    │                    │                    │                    │
-    │══ "Hi Bob!" ══════►│                    │                    │
-    │                    │                    │      broadcast("general", CHAT msg)
-    │                    │                    │                    │
-    │                    │◄═══════════════════│════════════════════│
-    │◄═══════════════════│════════════════════│════════════════════│
-    │  Alice+Bob both    │                    │  Carol is in a     │
-    │  receive the msg   │                    │  different room    │
-    │                    │                    │  → not delivered   │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Alice as Alice (general)
+    participant Bob as Bob (general)
+    participant Carol as Carol (engineering)
+    participant RM as RoomManager
+
+    rect rgb(224, 231, 255)
+    Alice->>RM: "Hi Bob!"
+    RM->>RM: broadcast("general", CHAT msg)
+    end
+    rect rgb(209, 250, 229)
+    RM-->>Alice: CHAT msg (echoed to sender)
+    RM-->>Bob: CHAT msg
+    Note over Carol: different room — not delivered
+    end
 ```
 
 ---
 
 ### Error Path
 
-```
-  Client              Javalin/Jetty          ChatHandler
-    │                      │                      │
-    │                      │    (network drops)   │
-    │   × TCP reset ×      │                      │
-    │                      │──── onError ─────────►│── log error
-    │                      │──── onClose ─────────►│── leave(room, ctx)
-    │                      │                       │── broadcast LEAVE
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Jetty as Javalin/Jetty
+    participant Handler as ChatHandler
+
+    rect rgb(255, 205, 205)
+    Note over Client,Jetty: network drops — × TCP reset ×
+    Jetty->>Handler: onError
+    Handler->>Handler: log error
+    Jetty->>Handler: onClose
+    Handler->>Handler: leave(room, ctx)
+    Handler-->>Handler: broadcast LEAVE
+    end
 ```
 
 ---

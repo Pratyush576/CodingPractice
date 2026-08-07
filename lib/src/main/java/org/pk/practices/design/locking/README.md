@@ -120,14 +120,25 @@ This is the most fundamental distinction between lock types.
 Only one thread may hold the lock at any time. All other threads block,
 regardless of whether they intend to read or write.
 
-```
-  State: Thread A holds the lock
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    participant A as Thread A
+    participant B as Thread B
+    participant C as Thread C
+    participant D as Thread D
 
-  Thread B (wants to write): ──── BLOCKED ────────────────────────────
-  Thread C (wants to read) : ──── BLOCKED ────  ← readers also blocked!
-  Thread D (wants to write): ──── BLOCKED ────
-
-  When A releases: exactly one of B, C, D proceeds
+    rect rgb(224, 231, 255)
+    Note over A: holds the lock
+    end
+    rect rgb(254, 243, 199)
+    Note over B: wants to write — BLOCKED
+    Note over C: wants to read — BLOCKED (readers also blocked!)
+    Note over D: wants to write — BLOCKED
+    end
+    rect rgb(209, 250, 229)
+    Note over A,D: When A releases: exactly one of B, C, D proceeds
+    end
 ```
 
 Java classes: `synchronized`, `ReentrantLock`, `StampedLock.writeLock()`
@@ -147,13 +158,22 @@ Java classes: `synchronized`, `ReentrantLock`, `StampedLock.writeLock()`
 Multiple threads may hold the lock simultaneously as long as no thread holds the
 write lock. Readers proceed concurrently; a writer blocks until all readers release.
 
-```
-  State: Threads A, B, C all hold read locks
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    participant A as Thread A
+    participant B as Thread B
+    participant C as Thread C
+    participant D as Thread D
 
-  Thread A (reading): ──── ACTIVE ────────────────────────────
-  Thread B (reading): ──── ACTIVE ────────────────────────────
-  Thread C (reading): ──── ACTIVE ────────────────────────────
-  Thread D (wants to write): ──── BLOCKED until A, B, C all release ────
+    rect rgb(209, 250, 229)
+    Note over A: reading — ACTIVE
+    Note over B: reading — ACTIVE
+    Note over C: reading — ACTIVE
+    end
+    rect rgb(254, 243, 199)
+    Note over D: wants to write — BLOCKED until A, B, C all release
+    end
 ```
 
 Java classes: `ReentrantReadWriteLock.readLock()`, `StampedLock.readLock()`
@@ -177,11 +197,14 @@ How does a thread behave while waiting for a lock it cannot acquire?
 The OS parks (sleeps) the thread. No CPU is consumed while waiting. A context switch
 is required to both park and wake the thread (roughly 1–10 µs of overhead).
 
-```
-  Thread B cannot acquire:
-    ├─ OS parks Thread B                (state: BLOCKED or WAITING)
-    ├─ CPU freed for other threads
-    └─ When lock released: OS wakes B   (context switch back)
+```mermaid
+flowchart TD
+    A["Thread B cannot acquire"] --> B["OS parks Thread B<br/>(state: BLOCKED or WAITING)"]
+    B --> C["CPU freed for other threads"]
+    C --> D["When lock released:<br/>OS wakes B (context switch back)"]
+
+    classDef step fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    class A,B,C,D step
 ```
 
 Java: `synchronized`, `ReentrantLock`, `ReadWriteLock`
@@ -196,10 +219,13 @@ would be wasteful. The 1–10 µs context switch cost is amortised over the wait
 The thread loops continuously, repeatedly attempting to acquire. CPU is consumed
 while waiting, but zero wake-up latency when the lock becomes available.
 
-```
-  Thread B cannot acquire:
-    └─ while (!tryAcquire()) { /* spin — CPU at 100% */ }
-       → When lock released: Thread B responds in nanoseconds (no OS wakeup)
+```mermaid
+flowchart TD
+    A["Thread B cannot acquire"] --> B["while (!tryAcquire())<br/>{ spin — CPU at 100% }"]
+    B --> C["When lock released:<br/>Thread B responds in nanoseconds (no OS wakeup)"]
+
+    classDef step fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A,B,C step
 ```
 
 Java: CAS loops in `AtomicLong`, `AtomicReference` are a form of spin lock.
@@ -417,16 +443,22 @@ Every Java object has a built-in monitor. `synchronized` acquires it. The monito
 includes one implicit condition variable — threads call `wait()` / `notify()` /
 `notifyAll()` on the guarded object.
 
-```
-  Java object in memory:
-  ┌──────────────────────────────────────┐
-  │  Mark word (in object header)        │  ← lock state: unlocked / biased /
-  │                                      │    lightweight / inflated (monitor ptr)
-  │  Monitor (when contended):           │
-  │    owner    → current holder thread  │
-  │    entry set → blocked threads       │
-  │    wait set  → threads in wait()     │
-  └──────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Obj["Java object in memory"]
+        Mark["Mark word (in object header)<br/>lock state: unlocked / biased /<br/>lightweight / inflated (monitor ptr)"]
+        subgraph Monitor["Monitor (when contended)"]
+            direction LR
+            Owner["owner<br/>current holder thread"]
+            Entry["entry set<br/>blocked threads"]
+            Wait["wait set<br/>threads in wait()"]
+        end
+    end
+
+    classDef header fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef monitor fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    class Mark header
+    class Owner,Entry,Wait monitor
 ```
 
 **Limitation:** One condition variable per object. All threads waiting on different
@@ -451,32 +483,37 @@ notEmpty.signal();   // precise — wakes only threads waiting on notEmpty
 
 ### Java Lock Taxonomy
 
-```
-java.util.concurrent.locks
-│
-├── Lock (interface: lock, unlock, tryLock, lockInterruptibly, newCondition)
-│   ├── ReentrantLock          ← mutex, reentrant, fair/unfair, full acquisition API
-│   └── (read/write locks implement Lock individually)
-│
-├── ReadWriteLock (interface: readLock, writeLock)
-│   └── ReentrantReadWriteLock ← shared reads + exclusive writes, reentrant, fair/unfair
-│
-├── StampedLock                ← optimistic reads, write lock, NOT reentrant, NOT a Lock impl.
-│                                 stamp-based API — must carry stamp through call chain
-│
-└── Condition (interface: await, signal, signalAll)
-    └── Created via lock.newCondition() on any Lock implementation
+```mermaid
+flowchart TD
+    subgraph Locks["java.util.concurrent.locks"]
+        Lock["Lock (interface)<br/>lock, unlock, tryLock,<br/>lockInterruptibly, newCondition"]
+        RL["ReentrantLock<br/>mutex, reentrant, fair/unfair,<br/>full acquisition API"]
+        RWL["ReadWriteLock (interface)<br/>readLock, writeLock"]
+        RRWL["ReentrantReadWriteLock<br/>shared reads + exclusive writes,<br/>reentrant, fair/unfair"]
+        SL["StampedLock<br/>optimistic reads, write lock,<br/>NOT reentrant, NOT a Lock impl."]
+        Cond["Condition (interface)<br/>await, signal, signalAll<br/>via lock.newCondition()"]
+        Lock --> RL
+        RWL --> RRWL
+        Lock -.->|creates| Cond
+    end
+    subgraph Coord["java.util.concurrent — coordination primitives"]
+        Sem["Semaphore<br/>N permits; counting; no ownership"]
+        CDL["CountDownLatch<br/>one-shot gate; count → 0 → permanently open"]
+        CB["CyclicBarrier<br/>reusable phase barrier; barrier action on last arrival"]
+        Ph["Phaser<br/>flexible multi-phase; dynamic registration/deregistration"]
+    end
+    subgraph Atomic["java.util.concurrent.atomic — lock-free, CAS-based"]
+        AL["AtomicLong / AtomicInteger / AtomicBoolean"]
+        AR["AtomicReference / AtomicStampedReference"]
+        LA["LongAdder / LongAccumulator<br/>striped counters; better under high contention"]
+    end
 
-java.util.concurrent  (coordination primitives — not mutual exclusion)
-├── Semaphore              ← N permits; counting; no ownership
-├── CountDownLatch         ← one-shot gate; count → 0 → permanently open
-├── CyclicBarrier          ← reusable phase barrier; barrier action on last arrival
-└── Phaser                 ← flexible multi-phase; dynamic registration/deregistration
-
-java.util.concurrent.atomic  (lock-free, CAS-based)
-├── AtomicLong / AtomicInteger / AtomicBoolean
-├── AtomicReference / AtomicStampedReference
-└── LongAdder / LongAccumulator  ← striped counters; better than AtomicLong under high contention
+    classDef lockCls fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef coordCls fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef atomicCls fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class Lock,RL,RWL,RRWL,SL,Cond lockCls
+    class Sem,CDL,CB,Ph coordCls
+    class AL,AR,LA atomicCls
 ```
 
 ---
@@ -606,14 +643,11 @@ public Data get() {      // read — shared (multiple threads proceed concurrent
 ```
 
 **Core rule:**
-```
-                ┌──────────────────┬──────────────────┐
-                │  Read lock held  │  Write lock held │
-  ┌─────────────┼──────────────────┼──────────────────┤
-  │ Read lock   │  Allowed ✓       │  Blocked ✗       │
-  │ Write lock  │  Blocked ✗       │  Blocked ✗       │
-  └─────────────┴──────────────────┴──────────────────┘
-```
+
+| Requesting ↓ / Held → | Read lock held | Write lock held |
+|---|---|---|
+| Read lock | Allowed ✓ | Blocked ✗ |
+| Write lock | Blocked ✗ | Blocked ✗ |
 
 Multiple threads can read simultaneously; a writer blocks everything.
 
@@ -661,12 +695,21 @@ public void increment() {
 ```
 
 **How optimistic read works:**
-```
-Thread reads version counter (stamp)   → no lock acquired
-Thread reads shared variable           → unsynchronised
-Thread calls validate(stamp)           → did any writer change the version?
-  ├── No change  →  value is consistent, return it (fast path ✓)
-  └── Changed    →  fall back to real readLock (slow path)
+```mermaid
+flowchart TD
+    A["Thread reads version counter (stamp)<br/>— no lock acquired"] --> B["Thread reads shared variable<br/>— unsynchronised"]
+    B --> C{"Thread calls validate(stamp) —<br/>did any writer change the version?"}
+    C -->|"No change"| D["value is consistent, return it<br/>(fast path ✓)"]
+    C -->|"Changed"| E["fall back to real readLock<br/>(slow path)"]
+
+    classDef step fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef fast fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef slow fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A,B step
+    class C decision
+    class D fast
+    class E slow
 ```
 
 In a write-rare workload, `validate` almost always succeeds — reads are effectively
@@ -926,58 +969,45 @@ The read-heavy benchmark shows the real power of `ReadWriteLock` and `StampedLoc
 
 ## Decision Guide
 
-```
-What problem are you solving?
-│
-├─ Shared mutable state (multiple threads read/write the same object)
-│   │
-│   ├─ Do you write to it?
-│   │   │
-│   │   ├─ Yes, and writes are frequent (≥ 30% of operations)
-│   │   │   │
-│   │   │   ├─ Simplest possible solution?
-│   │   │   │   └── synchronized               — intrinsic, readable, zero boilerplate
-│   │   │   │
-│   │   │   └── Need advanced acquisition?
-│   │   │       ├── Can't wait forever?         → ReentrantLock  + tryLock(timeout)
-│   │   │       ├── Must honour cancellation?   → ReentrantLock  + lockInterruptibly()
-│   │   │       ├── No starvation acceptable?   → ReentrantLock(true) — fair/FIFO
-│   │   │       └── Multiple wait conditions?   → ReentrantLock  + lock.newCondition()
-│   │   │
-│   │   └─ Yes, but writes are rare (reads >> writes)
-│   │       │
-│   │       ├── Need reentrancy or Condition?   → ReentrantReadWriteLock
-│   │       │     (shared reads, exclusive writes; readers don't block each other)
-│   │       │
-│   │       └── Maximum read throughput, no reentrancy needed?
-│   │             → StampedLock  (optimistic read — lock-free fast path)
-│   │
-│   └─ No writes — just reads (or value set once, then read-only)
-│       └── volatile field  or  AtomicReference  (visibility, no mutual exclusion needed)
-│
-├─ Single field update (counter, flag, reference swap)
-│   │
-│   ├── Low-to-medium contention?       → AtomicLong / AtomicInteger / AtomicBoolean
-│   └── Very high contention on counter → LongAdder  (striped; better than AtomicLong)
-│
-└─ Thread coordination — not guarding shared state, but synchronising execution
-    │
-    ├── Cap concurrent access to N resources (connection pool, rate limiting)?
-    │     → Semaphore(N)               — counting permits, no ownership
-    │
-    ├── One thread starts; many workers proceed simultaneously (start gate)?
-    │     → CountDownLatch(1)          — countDown() once, all await()-ers released
-    │
-    ├── Main thread waits for N async tasks to complete (end gate)?
-    │     → CountDownLatch(N)          — each task countDown()s; main await()s
-    │
-    ├── N threads must all finish Phase 1 before any begin Phase 2?
-    │     Fixed party count, reuse across phases?
-    │     → CyclicBarrier(N)           — resets automatically; optional barrier action
-    │
-    └── Multi-phase pipeline with dynamic participant count?
-          Workers may fail and deregister mid-flight?
-          → Phaser                     — register/deregister at runtime; override onAdvance()
+```mermaid
+flowchart TD
+    Root{"What problem are you solving?"}
+    Root --> SMS{"Shared mutable state?<br/>(multiple threads read/write the same object)"}
+    Root --> SFU{"Single field update?<br/>(counter, flag, reference swap)"}
+    Root --> TC{"Thread coordination?<br/>(synchronizing execution, not guarding state)"}
+
+    SMS --> Write{"Do you write to it?"}
+    Write -->|"Yes, frequent<br/>(≥ 30% of operations)"| Simple{"Simplest possible<br/>solution enough?"}
+    Simple -->|yes| Sync["synchronized<br/>intrinsic, readable, zero boilerplate"]
+    Simple -->|"need advanced acquisition"| Adv{"What acquisition<br/>behavior is needed?"}
+    Adv -->|"can't wait forever"| RL1["ReentrantLock<br/>+ tryLock(timeout)"]
+    Adv -->|"must honor cancellation"| RL2["ReentrantLock<br/>+ lockInterruptibly()"]
+    Adv -->|"no starvation acceptable"| RL3["ReentrantLock(true)<br/>fair/FIFO"]
+    Adv -->|"multiple wait conditions"| RL4["ReentrantLock<br/>+ lock.newCondition()"]
+
+    Write -->|"Yes, rare<br/>(reads ≫ writes)"| RWDecision{"Need reentrancy<br/>or Condition?"}
+    RWDecision -->|yes| RRWL["ReentrantReadWriteLock<br/>shared reads, exclusive writes"]
+    RWDecision -->|"no — max read throughput"| Stamped["StampedLock<br/>optimistic read, lock-free fast path"]
+
+    Write -->|"No writes — read-only"| Volatile["volatile field or AtomicReference<br/>visibility only, no mutual exclusion needed"]
+
+    SFU -->|"low-to-medium contention"| AtomicX["AtomicLong / AtomicInteger /<br/>AtomicBoolean"]
+    SFU -->|"very high contention"| LongAdderX["LongAdder<br/>striped; better than AtomicLong"]
+
+    TC -->|"cap concurrent access to<br/>N resources (pool, rate limit)"| SemX["Semaphore(N)<br/>counting permits, no ownership"]
+    TC -->|"one starts, many proceed<br/>(start gate)"| CDL1["CountDownLatch(1)"]
+    TC -->|"main waits for N tasks<br/>(end gate)"| CDL2["CountDownLatch(N)"]
+    TC -->|"N threads sync between<br/>fixed phases, reused"| CBX["CyclicBarrier(N)<br/>resets automatically"]
+    TC -->|"multi-phase, dynamic<br/>participant count"| PhX["Phaser<br/>register/deregister at runtime"]
+
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef lockOutcome fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef atomicOutcome fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef coordOutcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class Root,SMS,SFU,TC,Write,Simple,Adv,RWDecision decision
+    class Sync,RL1,RL2,RL3,RL4,RRWL,Stamped,Volatile lockOutcome
+    class AtomicX,LongAdderX atomicOutcome
+    class SemX,CDL1,CDL2,CBX,PhX coordOutcome
 ```
 
 ### Real-World Examples by Mechanism

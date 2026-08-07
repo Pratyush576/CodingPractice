@@ -66,85 +66,70 @@ GET    /health                     Health check (returns 200 OK)
 
 ### Component Layers
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         HTTP Client                                 │
-│                      (curl / browser)                               │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  HTTP Request
-                               ▼  (Response ↑)
-┌─────────────────────────────────────────────────────────────────────┐
-│              RestApiServer  —  port 8081                            │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  Javalin (Embedded Jetty)                                     │  │
-│  │                                                               │  │
-│  │  ┌─────────────────────────────────────────────────────────┐  │  │
-│  │  │  Router                                                 │  │  │
-│  │  │  GET    /api/employees       ──► handler::getAll        │  │  │
-│  │  │  GET    /api/employees/{id}  ──► handler::getById       │  │  │
-│  │  │  POST   /api/employees       ──► handler::create        │  │  │
-│  │  │  PUT    /api/employees/{id}  ──► handler::update        │  │  │
-│  │  │  DELETE /api/employees/{id}  ──► handler::delete        │  │  │
-│  │  │  GET    /health              ──► ctx.result("OK")       │  │  │
-│  │  └─────────────────────────────────────────────────────────┘  │  │
-│  │                                                               │  │
-│  │  ┌──────────────────────┐  ┌──────────────────────────────┐  │  │
-│  │  │  Request Logger      │  │  Global Exception Handler    │  │  │
-│  │  │  (every request)     │  │  HttpResponseException (4xx) │  │  │
-│  │  │  method path status  │  │    ──► JSON ErrorResponse    │  │  │
-│  │  │  latency (ms)        │  │  Exception ──► 500 + log     │  │  │
-│  │  └──────────────────────┘  └──────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  method reference call
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       EmployeeHandler                               │
-│                                                                     │
-│  ① parse    ctx.pathParam() / queryParam() / bodyAsClass()          │
-│  ② validate throw BadRequestResponse / NotFoundResponse if invalid  │
-│  ③ delegate call EmployeeStore                                      │
-│  ④ respond  ctx.status(xxx).json(result)                            │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  CRUD calls
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       EmployeeStore                                 │
-│                                                                     │
-│   ConcurrentHashMap<String, Employee>    AtomicLong (ID sequence)   │
-│                                                                     │
-│   findAll(dept?)    findById(id)    save(employee)    delete(id)    │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Client["HTTP Client<br/>(curl / browser)"]
+    subgraph Server["RestApiServer — port 8081"]
+        subgraph Router["Router"]
+            R1["GET /api/employees → handler::getAll"]
+            R2["GET /api/employees/{id} → handler::getById"]
+            R3["POST /api/employees → handler::create"]
+            R4["PUT /api/employees/{id} → handler::update"]
+            R5["DELETE /api/employees/{id} → handler::delete"]
+            R6["GET /health → ctx.result('OK')"]
+        end
+        Logger["Request Logger<br/>method, path, status, latency (ms)"]
+        ExHandler["Global Exception Handler<br/>HttpResponseException (4xx) → JSON ErrorResponse<br/>Exception → 500 + log"]
+    end
+    Handler["EmployeeHandler<br/>1. parse  2. validate  3. delegate  4. respond"]
+    Store[("EmployeeStore<br/>ConcurrentHashMap&lt;String, Employee&gt; + AtomicLong<br/>findAll(dept?) findById(id) save(employee) delete(id)")]
+
+    Client -->|"HTTP Request"| Router
+    Router -->|"method reference call"| Handler
+    Handler -->|"CRUD calls"| Store
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef router fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef cross fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef handler fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef store fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class Client client
+    class R1,R2,R3,R4,R5,R6 router
+    class Logger,ExHandler cross
+    class Handler handler
+    class Store store
 ```
 
 ---
 
 ### Request Lifecycle — Happy Path (`POST /api/employees`)
 
-```
- Client               Javalin/Jetty          EmployeeHandler        EmployeeStore
-   │                       │                       │                      │
-   │─① POST /employees────►│                       │                      │
-   │  {"name":"Dave",      │                       │                      │
-   │   "department":"Fin", │                       │                      │
-   │   "salary":80000}     │                       │                      │
-   │                       │─② match route ───────►│                      │
-   │                       │  log: POST /api/...   │                      │
-   │                       │                       │─③ bodyAsClass()      │
-   │                       │                       │  deserialize JSON     │
-   │                       │                       │─④ validate()         │
-   │                       │                       │  (all fields valid)  │
-   │                       │                       │─⑤ nextId() ─────────►│
-   │                       │                       │◄─ "4" ───────────────│
-   │                       │                       │─⑥ save(Employee) ───►│
-   │                       │                       │◄─ Employee{id="4"} ──│
-   │                       │                       │─⑦ ctx.status(201)    │
-   │                       │                       │   ctx.json(employee) │
-   │                       │  log: POST -> 201     │                      │
-   │◄─⑧ HTTP 201 ──────────│◄──────────────────────│                      │
-   │  {"id":"4","name":    │                       │                      │
-   │   "Dave",...}         │                       │                      │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Jetty as Javalin/Jetty
+    participant Handler as EmployeeHandler
+    participant Store as EmployeeStore
+
+    rect rgb(224, 231, 255)
+    Client->>Jetty: POST /employees {name:"Dave", department:"Fin", salary:80000}
+    Jetty->>Handler: match route (log: POST /api/...)
+    end
+    rect rgb(254, 243, 199)
+    Handler->>Handler: bodyAsClass() — deserialize JSON
+    Handler->>Handler: validate() — all fields valid
+    Handler->>Store: nextId()
+    Store-->>Handler: "4"
+    Handler->>Store: save(Employee)
+    Store-->>Handler: Employee{id="4"}
+    end
+    rect rgb(209, 250, 229)
+    Handler->>Handler: ctx.status(201).json(employee)
+    Jetty->>Jetty: log: POST -> 201
+    Jetty-->>Client: HTTP 201 {id:"4", name:"Dave", ...}
+    end
 ```
 
 ---
@@ -153,42 +138,56 @@ GET    /health                     Health check (returns 200 OK)
 
 **Validation failure (`POST` with blank name):**
 
-```
- Client               Javalin/Jetty          EmployeeHandler
-   │                       │                       │
-   │─① POST /employees────►│                       │
-   │  {"name":"", ...}     │─② match route ───────►│
-   │                       │                       │─③ bodyAsClass()
-   │                       │                       │─④ validate()
-   │                       │                       │  name is blank!
-   │                       │                       │  throw BadRequestResponse
-   │                       │◄─⑤ exception ─────────│
-   │                       │   global handler      │
-   │                       │   catches it          │
-   │                       │  log: POST -> 400     │
-   │◄─⑥ HTTP 400 ──────────│                       │
-   │  {"error":            │                       │
-   │   "name is required"} │                       │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Jetty as Javalin/Jetty
+    participant Handler as EmployeeHandler
+
+    rect rgb(224, 231, 255)
+    Client->>Jetty: POST /employees {name:"", ...}
+    Jetty->>Handler: match route
+    end
+    rect rgb(255, 205, 205)
+    Handler->>Handler: bodyAsClass()
+    Handler->>Handler: validate() — name is blank!
+    Handler-->>Jetty: throw BadRequestResponse
+    Jetty->>Jetty: global handler catches it (log: POST -> 400)
+    end
+    rect rgb(209, 250, 229)
+    Jetty-->>Client: HTTP 400 {"error": "name is required"}
+    end
 ```
 
 **Resource not found (`GET /api/employees/99`):**
 
-```
- Client               Javalin/Jetty          EmployeeHandler        EmployeeStore
-   │                       │                       │                      │
-   │─① GET /employees/99──►│─② match route ───────►│                      │
-   │                       │                       │─③ pathParam("id")    │
-   │                       │                       │─④ findById("99") ───►│
-   │                       │                       │◄─ Optional.empty() ──│
-   │                       │                       │─⑤ throw NotFoundResponse
-   │                       │◄─⑥ exception ─────────│
-   │                       │   global handler      │
-   │                       │   catches it          │
-   │                       │  log: GET -> 404      │
-   │◄─⑦ HTTP 404 ──────────│                       │
-   │  {"error":            │                       │
-   │   "Employee not       │                       │
-   │    found: 99"}        │                       │
+```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
+sequenceDiagram
+    autonumber
+    participant Client
+    participant Jetty as Javalin/Jetty
+    participant Handler as EmployeeHandler
+    participant Store as EmployeeStore
+
+    rect rgb(224, 231, 255)
+    Client->>Jetty: GET /employees/99
+    Jetty->>Handler: match route
+    Handler->>Handler: pathParam("id")
+    end
+    rect rgb(254, 243, 199)
+    Handler->>Store: findById("99")
+    Store-->>Handler: Optional.empty()
+    Handler-->>Jetty: throw NotFoundResponse
+    end
+    rect rgb(255, 205, 205)
+    Jetty->>Jetty: global handler catches it (log: GET -> 404)
+    end
+    rect rgb(209, 250, 229)
+    Jetty-->>Client: HTTP 404 {"error": "Employee not found: 99"}
+    end
 ```
 
 ---
