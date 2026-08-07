@@ -67,7 +67,7 @@ flowchart TB
 | 5 | [EDI (X12)](#5-edi-x12) | API Protocol | ISA envelope, 850/997, parsing | [README](lib/src/main/java/org/pk/practices/design/api/edi/README.md) |
 | 6 | [Locking](#6-locking--concurrency) | Concurrency | 9 lock types, benchmarks | [README](lib/src/main/java/org/pk/practices/design/locking/README.md) |
 | 7 | [Bloom Filter](#7-bloom-filter) | Data Structures | MurmurHash3, CAS, FPP math | [DESIGN](lib/src/main/java/org/pk/practices/design/bloomfilter/DESIGN.md) |
-| 8 | [LRU Cache](#8-lru-cache) | Data Structures | Doubly-linked list + HashMap | Source |
+| 8 | [LRU Cache](#8-lru-cache) | Data Structures | Doubly-linked list + HashMap | [DESIGN](lib/src/main/java/org/pk/practices/design/caching/DESIGN.md) |
 | 9 | [Rate Limiter](#9-rate-limiter) | Concurrency | Token Bucket algorithm | Source |
 | 10 | [DSA](#10-algorithms--data-structures) | Algorithms | Search, Trees, DP, Queues | Source |
 | 11 | [AWS Lambda](#11-aws-lambda) | Cloud / Serverless | Handler contract, event shapes, `Context` | [README](lib/src/main/java/org/pk/practices/aws/lambda/README.md) |
@@ -474,6 +474,11 @@ flowchart TD
 | Eviction target | Tail of doubly-linked list | O(1) |
 
 **Source:** [`design/caching/`](lib/src/main/java/org/pk/practices/design/caching/)
+
+[Design Document →](lib/src/main/java/org/pk/practices/design/caching/DESIGN.md) — a deep
+dive on caching *strategies* (cache-aside, read-through, write-through,
+write-behind, write-around, refresh-ahead) and when to use each, layered on
+top of the eviction policy above.
 
 ---
 
