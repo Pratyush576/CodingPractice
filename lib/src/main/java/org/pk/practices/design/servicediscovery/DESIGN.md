@@ -72,6 +72,17 @@ flowchart TB
     DNS -- "6. read live instances (on-demand, per query)" --> Registry
     Registry -- "7" --> LB
     LB -- "8. pick()" --> Client
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gateway fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef service fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef background fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+    class Client client
+    class API gateway
+    class Health background
+    class DNS,LB service
+    class Registry store
 ```
 
 **How to read this diagram:** The API layer is the only thing clients talk to — it is
@@ -113,6 +124,11 @@ flowchart LR
     A --> DNS
     B --> DNS
     C --> DNS
+
+    classDef cluster fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef dns fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A,B,C cluster
+    class DNS dns
 ```
 
 **How to read this diagram:** Each region owns an independent 3-node cluster
@@ -144,6 +160,13 @@ graph TD
     S1 --> I1
     S1 --> I2
     S2 --> I3
+
+    classDef namespace fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef service fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef instance fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    class NS namespace
+    class S1,S2 service
+    class I1,I2,I3 instance
 ```
 
 **How to read this diagram:** Three levels, always traversed top-down. A namespace
@@ -241,6 +264,15 @@ flowchart TD
     G --> H{"7. consecutiveFailures >= threshold?"}
     H -->|yes| I["8a. markUnhealthy()"]
     H -->|no| J["8b. stay HEALTHY — transient blip ignored"]
+
+    classDef process fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef failure fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class A,B,C,D,G process
+    class E,H decision
+    class F,J success
+    class I failure
 ```
 
 **How to read this diagram:** Every check cycle re-evaluates every instance
@@ -325,6 +357,15 @@ flowchart LR
     Cache -->|HIT| Fast["3a. Serve from cache (~0 ms)"]
     Cache -->|MISS| Query["3b. Query discovery cluster"]
     Query --> Update["4. Update local cache"] --> Fast
+
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef fast fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef slow fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class Q client
+    class Cache decision
+    class Fast fast
+    class Query,Update slow
 ```
 
 **How to read this diagram:** The cache check happens entirely client-side before any
@@ -499,6 +540,13 @@ flowchart TB
         direction LR
         C3["Client"] -- "1" --> Proxy["Envoy / NGINX"] -- "2. routes request" --> Backends["Discovered backends"]
     end
+
+    classDef optionA fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef optionB fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef optionC fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    class C1,P1 optionA
+    class C2,P2,SDK optionB
+    class C3,Proxy,Backends optionC
 ```
 
 **How to read this diagram:** The three options trade a round trip for control. Option
@@ -547,6 +595,7 @@ Use when: stateful services where the same caller must reach the same backend
 ### Instance crash (no graceful deregister)
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Instance
@@ -554,12 +603,18 @@ sequenceDiagram
     participant Registry
     participant Client
 
+    rect rgb(224, 231, 255)
     Note over Instance: t=0s — crashes, no deregister call
     Note over Registry: t=3s — heartbeat TTL expires → healthStatus=UNKNOWN
+    end
+    rect rgb(254, 243, 199)
     Scheduler->>Registry: t=4s check cycle → consecutiveFailures=1 (still UNKNOWN)
     Scheduler->>Registry: t=5s check cycle → consecutiveFailures=2 → UNHEALTHY
+    end
+    rect rgb(209, 250, 229)
     Client->>Registry: lookup()
     Registry-->>Client: t=5s — instance excluded
+    end
     Note over Client: DNS-cached clients converge once TTL=10s elapses
 ```
 
@@ -583,17 +638,24 @@ that's why the total outage window below is DNS-dominated, not health-check-domi
 ### Discovery cluster node failure
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Client
     participant NodeA as Discovery Node A (down)
     participant NodeB as Discovery Node B
 
+    rect rgb(224, 231, 255)
     Client->>NodeA: query (cache miss)
     NodeA--xClient: no response
+    end
+    rect rgb(254, 243, 199)
     Note over Client: falls back to local cache (TTL 10s) in the meantime
+    end
+    rect rgb(209, 250, 229)
     Client->>NodeB: retry on next cache miss
     NodeB-->>Client: response — cluster still serving (2+ nodes healthy)
+    end
 ```
 
 **How to read this diagram:** The client never notices a clean failover as an outage
@@ -619,6 +681,13 @@ flowchart TB
     NodeA -. "2. partition heals" .-> Reconcile["3. Raft consensus reconciles state"]
     NodeB -. "2. partition heals" .-> Reconcile
     Reconcile --> Discard["4. Minority side discards divergent writes"]
+
+    classDef partitioned fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef consensus fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef outcome fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class NodeA,NodeB partitioned
+    class Reconcile consensus
+    class Discard outcome
 ```
 
 **How to read this diagram:** Both sides of the partition keep serving reads and

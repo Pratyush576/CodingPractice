@@ -204,6 +204,7 @@ below, applied to booking data instead of capacity.
 
 **Sequence diagram — `submit()`:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Shipper
@@ -211,14 +212,18 @@ sequenceDiagram
     participant Repo as BookingRepository
     participant Bus as EventPublisher
 
+    rect rgb(224, 231, 255)
     Shipper->>Booking: submit(tenantId, bookingId)
     Booking->>Repo: get(bookingId)
     Repo-->>Booking: Booking{status=DRAFT}
     Booking->>Booking: re-validate required fields
+    end
     alt still valid
+        rect rgb(209, 250, 229)
         Booking->>Repo: save(status=SUBMITTED)
         Booking->>Bus: publish(BookingSubmitted)
         Booking-->>Shipper: 200 OK
+        end
     else missing/invalid field
         Booking-->>Shipper: ValidationException
     end
@@ -431,6 +436,7 @@ a re-quote rather than a hard failure ([§11.3](DESIGN.md#11-failure-scenarios))
 
 **Sequence diagram — `reserve()` CAS retry:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Planning as PlanningEngine
@@ -438,6 +444,7 @@ sequenceDiagram
     participant Repo as CapacityOfferingRepository
 
     Planning->>Matching: reserve(offeringId, requirement)
+    rect rgb(254, 243, 199)
     loop up to MAX_RETRIES
         Matching->>Repo: get(offeringId)
         Repo-->>Matching: CapacityOffering{version=v}
@@ -446,13 +453,16 @@ sequenceDiagram
         else capacity available
             Matching->>Repo: compareAndSwap(offeringId, v, updated)
             alt CAS succeeded
+                rect rgb(209, 250, 229)
                 Repo-->>Matching: true
                 Matching-->>Planning: success(updated)
+                end
             else lost the race
                 Repo-->>Matching: false
                 Note over Matching: retry with a fresh read
             end
         end
+    end
     end
     Matching-->>Planning: contention() (retries exhausted)
 ```
@@ -635,6 +645,7 @@ public interface ObjectiveStrategy {
 
 **Sequence diagram — `confirm()`:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Shipper
@@ -643,7 +654,9 @@ sequenceDiagram
     participant Repo as PlanRepository
     participant Bus as EventPublisher
 
+    rect rgb(224, 231, 255)
     Shipper->>Planning: confirm(booking, selectedQuote)
+    end
     alt quote expired
         Planning-->>Shipper: DomainException (re-quote)
     else quote still valid
@@ -652,11 +665,13 @@ sequenceDiagram
             Matching-->>Planning: insufficient() / contention()
             Planning-->>Shipper: ConflictException (re-quote)
         else reserved
+            rect rgb(209, 250, 229)
             Matching-->>Planning: success(updated)
             Planning->>Planning: assign sequenceNumber, validate leg continuity
             Planning->>Repo: save(Plan{version=1, status=ACTIVE})
             Planning->>Bus: publish(BookingConfirmed)
             Planning-->>Shipper: Plan
+            end
         end
     end
 ```
@@ -726,6 +741,7 @@ public interface ReplanPolicy {
 
 **Sequence diagram — auto-replan path:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Disruption as DisruptionDetectionService
@@ -734,16 +750,20 @@ sequenceDiagram
     participant Planning as PlanningEngine
     participant Human as Human planner
 
+    rect rgb(224, 231, 255)
     Disruption->>Replan: onDisruption(DisruptionDetected)
     Replan->>Replan: resolve impacted legs (sequenceNumber >= disrupted leg)
     Replan->>Policy: evaluate chain
+    end
     alt all policies permit
+        rect rgb(209, 250, 229)
         Policy-->>Replan: permitted
         Replan->>Planning: quote(tightened constraints)
         Planning-->>Replan: List<Quote>
         Replan->>Planning: confirm(booking, topQuote)
         Planning-->>Replan: Plan{version+1}
         Note over Replan: previous Plan version -> SUPERSEDED
+        end
     else a policy blocks
         Policy-->>Replan: denied
         Replan->>Human: Exception{MANUAL_REPLAN_REQUIRED} + quote() results
@@ -871,6 +891,7 @@ concurrency primitive.
 
 **Sequence diagram — `ingest()`:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Source as External source (Carrier/LSP)
@@ -879,8 +900,10 @@ sequenceDiagram
     participant Repo as Leg/Milestone store (DynamoDB)
     participant Bus as EventPublisher
 
+    rect rgb(224, 231, 255)
     Source->>Milestone: ingest(RawMilestoneEvent)
     Milestone->>Dedupe: seen(source, externalEventId)?
+    end
     alt already seen
         Dedupe-->>Milestone: true
         Milestone-->>Source: discard (silent)
@@ -889,8 +912,10 @@ sequenceDiagram
         Milestone->>Repo: resolve Leg via containerNumber/conveyanceNumber
         Milestone->>Milestone: validate transition + sequenceNumber predecessor + document gate
         alt valid
+            rect rgb(209, 250, 229)
             Milestone->>Repo: apply transition, recompute ETA
             Milestone->>Bus: publish(MilestoneUpdated)
+            end
         else invalid
             Milestone->>Milestone: buffer for reconciliation / raise Exception
         end
@@ -1080,6 +1105,7 @@ contention, safe to shard by `legId` exactly like Milestone Processing.
 
 **Sequence diagram — accessorial clock lifecycle:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Milestone as MilestoneProcessing
@@ -1088,22 +1114,28 @@ sequenceDiagram
     participant Sweep as Disruption Detection (scheduled sweep)
     participant Bus as EventPublisher
 
+    rect rgb(224, 231, 255)
     Milestone->>Accessorial: onMilestone(startMilestone match)
     Accessorial->>Clock: open (legId, ruleId)
+    end
 
+    rect rgb(254, 243, 199)
     loop scheduled sweep
         Sweep->>Clock: scan open clocks
         alt >= 80% free time elapsed, no end yet
             Sweep->>Bus: publish(AccessorialRiskDetected)
         end
     end
+    end
 
+    rect rgb(209, 250, 229)
     Milestone->>Accessorial: onMilestone(endMilestone match)
     Accessorial->>Clock: find open clock, compute duration
     alt duration > freeTime
         Accessorial->>Bus: publish(AccessorialCharge)
     end
     Accessorial->>Clock: close clock
+    end
 ```
 
 **Communication & storage:**
@@ -1224,6 +1256,7 @@ verification failure throws before any adapter or business logic runs.
 
 **Sequence diagram — authenticate/authorize gate:**
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Caller as Inbound caller (Shipper/Carrier/LSP)
@@ -1232,8 +1265,10 @@ sequenceDiagram
     participant Authz as Authorizer
     participant Service as Target component (§2-14)
 
+    rect rgb(224, 231, 255)
     Caller->>Gateway: request + credential (mTLS/OAuth/API key/HMAC)
     Gateway->>Auth: authenticate(request)
+    end
     alt credential invalid
         Auth-->>Gateway: AuthenticationException
         Gateway-->>Caller: 401
@@ -1247,9 +1282,11 @@ sequenceDiagram
             Authz-->>Gateway: AuthorizationException
             Gateway-->>Caller: 403
         else both pass
+            rect rgb(209, 250, 229)
             Authz-->>Gateway: ok
             Gateway->>Service: forward request
             Service-->>Caller: response
+            end
         end
     end
 ```

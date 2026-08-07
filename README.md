@@ -449,6 +449,7 @@ proxy-integration shape — invoked directly with no AWS account, no Docker,
 and no deployment.
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Source as Event source
@@ -456,14 +457,20 @@ sequenceDiagram
     participant Runtime as Runtime
     participant Handler as Your handler
 
+    rect rgb(224, 231, 255)
     Source->>Service: event
     Service->>Runtime: cold/warm start
     Runtime->>Handler: construct
+    end
+    rect rgb(254, 243, 199)
     Service->>Runtime: invoke(event, ctx)
     Runtime->>Handler: deserialize → handleRequest()
     Handler-->>Runtime: returns
+    end
+    rect rgb(209, 250, 229)
     Runtime-->>Service: serialize response
     Service-->>Source: response
+    end
 ```
 
 **Key concepts:** `RequestHandler<Input, Output>` is the entire contract with
@@ -493,6 +500,15 @@ stateDiagram-v2
     InFlight --> Deleted: deleteMessage()
     InFlight --> Available: timeout expires,<br/>receiveCount < max
     InFlight --> DeadLetter: timeout expires,<br/>receiveCount >= max
+
+    classDef available fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef inflight fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef dlq fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class Available available
+    class InFlight inflight
+    class Deleted success
+    class DeadLetter dlq
 ```
 
 **Key concepts:** a receipt handle is a single-use claim token minted fresh

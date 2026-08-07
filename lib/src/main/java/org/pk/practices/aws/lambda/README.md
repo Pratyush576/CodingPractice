@@ -37,6 +37,7 @@ aws/lambda/
 ## How a Real Deployed Lambda Invocation Works
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Source as Event source<br/>(API GW / S3 / SQS / ...)
@@ -44,20 +45,26 @@ sequenceDiagram
     participant Runtime as Runtime<br/>(JVM, managed by AWS)
     participant Handler as Your handler<br/>(your code)
 
+    rect rgb(224, 231, 255)
     Source->>Service: event happens
     opt Cold start
         Service->>Runtime: start JVM, load classes,<br/>run static initializers
         Runtime->>Handler: construct (no-arg constructor)
     end
+    end
+    rect rgb(254, 243, 199)
     Service->>Runtime: invoke(event JSON, Context)
     Runtime->>Runtime: deserialize JSON into your Input type
     Runtime->>Handler: handleRequest(input, context)
     Handler-->>Handler: your code runs
     Handler-->>Runtime: returns Output
+    end
+    rect rgb(209, 250, 229)
     Runtime->>Runtime: serialize Output to JSON
     Runtime-->>Service: response
     Service-->>Source: response
-    Note over Runtime,Handler: Runtime stays WARM for the next invocation — this is what<br/>"warm start" means. AWS reuses the same JVM/class state<br/>until it decides to recycle it
+    end
+    Note over Runtime,Handler: Runtime stays WARM for the next invocation - this is what<br/>"warm start" means. AWS reuses the same JVM/class state<br/>until it decides to recycle it
 ```
 
 Everything above the "Your handler" column is infrastructure you never write
@@ -73,17 +80,22 @@ There is no Lambda service, no runtime, and no event source here — just the
 handler code, called directly:
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Main as LambdaLocalDemo.main()
     participant Handler as GreetingHandler
 
+    rect rgb(224, 231, 255)
     Main->>Main: new GreetingRequest("Pratyush")<br/>(stands in for the event source's JSON)
     Main->>Main: new LocalContext()<br/>(stands in for what the runtime would build)
+    end
+    rect rgb(209, 250, 229)
     Main->>Handler: handleRequest(request, context)
     Note over Main,Handler: the ONE call the real runtime makes
     Handler-->>Main: returns GreetingResponse
-    Note over Main: printed directly — no serialization step needed
+    Note over Main: printed directly - no serialization step needed
+    end
 ```
 
 No cold start, no JSON (de)serialization by a runtime, no event source —

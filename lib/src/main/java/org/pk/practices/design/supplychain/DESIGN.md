@@ -207,6 +207,19 @@ flowchart TB
     CommSvc -- "20b. notify" --> Operator
     BillingSvc -- "21a. invoices" --> BookingPortal
     BillingSvc -- "21b. settlements" --> OperatorPortal
+
+    classDef demand fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef supply fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef gate fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef hinge fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef background fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+    class Shipper,BookingPortal,BookingSvc demand
+    class Operator,OperatorPortal,SupplySvc,ContractSvc,VisibilitySvc,CommSvc,BillingSvc supply
+    class ComplianceSvc,PlanEngine gate
+    class MatchEngine hinge
+    class Procurement,Carrier,Ingestion,MilestoneSvc,DisruptionSvc,ReplanEngine background
+    class Store,Bus store
 ```
 
 **How to read this diagram:** This is the spine of the whole platform — every
@@ -687,6 +700,19 @@ stateDiagram-v2
     COMPLETED --> [*]
     CANCELLED --> [*]
     REJECTED --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gating fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef milestone fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef executing fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class DRAFT,SUBMITTED early
+    class MATCHED,UNMATCHED gating
+    class CONFIRMED milestone
+    class DOCUMENTATION_READY,READY_FOR_PICKUP,IN_TRANSIT,ARRIVED_AT_DESTINATION executing
+    class COMPLETED success
+    class CANCELLED,REJECTED terminalFail
 ```
 
 This is the authoritative lifecycle — the states that gate real business rules (can
@@ -771,6 +797,17 @@ flowchart TD
     E --> F["5. Risk-transfer point tagged on the Plan<br/>(e.g. FOB → LOADED at origin port)"]
     F --> G["6. When that milestone fires,<br/>primary notification recipient switches to whichever party now bears risk"]
     G --> H["7. Customs / document exceptions routed per the matrix,<br/>not always to the Shipper"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef reject fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef process fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef outcome fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class A input
+    class B decision
+    class C reject
+    class D,E,F,G process
+    class H outcome
 ```
 
 **Sequence:**
@@ -803,6 +840,17 @@ flowchart TD
     D --> G["6. Planning Engine selects best candidate,<br/>reserves capacity (atomic decrement)"]
     G --> H["7. Booking → CONFIRMED,<br/>Shipment + Plan created"]
     H --> I["8. Publish BookingConfirmed"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef alternate fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef milestone fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A input
+    class B,D,G process
+    class C decision
+    class E,F alternate
+    class H,I milestone
 ```
 
 **Sequence:**
@@ -909,6 +957,17 @@ stateDiagram-v2
     ACTIVE --> TERMINATED : early termination
     EXPIRED --> [*]
     TERMINATED --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gating fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef active fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef renewed fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class DRAFT early
+    class PENDING_APPROVAL gating
+    class ACTIVE active
+    class RENEWED renewed
+    class EXPIRED,TERMINATED terminalFail
 ```
 
 Like Plans, contracts are versioned rather than edited in place: a `RENEWED` contract
@@ -928,6 +987,15 @@ flowchart TD
     F --> G
     G --> H["6. Proceed to Planning Engine<br/>with the resolved RateProvider"]
     C --> H
+
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef alternate fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A,D decision
+    class B,E,G process
+    class C,F alternate
+    class H outcome
 ```
 
 **Sequence:**
@@ -1071,6 +1139,13 @@ flowchart LR
     B --> C["3. Price each candidate (RateProvider,<br/>date-aware) + estimate a delivery window<br/>(TransitTimeEstimator)"]
     C --> D["4. Group into distinct options<br/>by mode, speed tier, ship date"]
     D --> E["5. Return ranked Quotes to the shipper<br/>(non-binding, each with a validUntil)"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A input
+    class B,C,D process
+    class E outcome
 ```
 
 **Sequence:**
@@ -1089,6 +1164,17 @@ flowchart TD
     C --> D["4. Persist Plan v1 ACTIVE;<br/>Booking → CONFIRMED"]
     B -->|no| E["5. Discard stale Quote"]
     E --> F["6. Re-run the quote flow,<br/>return fresh options"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef alternate fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A input
+    class B decision
+    class C process
+    class D outcome
+    class E,F alternate
 ```
 
 **Sequence:**
@@ -1119,6 +1205,17 @@ stateDiagram-v2
     ACTIVE --> CANCELLED : booking cancelled
     COMPLETED --> [*]
     CANCELLED --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef active fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef superseded fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class DRAFT early
+    class ACTIVE active
+    class SUPERSEDED superseded
+    class COMPLETED success
+    class CANCELLED terminalFail
 ```
 
 Plans are never mutated in place — replanning always produces a new version and marks
@@ -1134,6 +1231,17 @@ flowchart TD
     F --> G["6. Bump Plan version,<br/>mark old SUPERSEDED"]
     G --> H["7. Publish PlanChanged"]
     E -.->|planner resolves| D
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef escalate fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A input
+    class B,D,F process
+    class C decision
+    class E escalate
+    class G,H outcome
 ```
 
 **Sequence:**
@@ -1166,6 +1274,17 @@ flowchart LR
     C -->|no match| E["discard"]
     D --> F["5. Impact assessment:<br/>lane → affected active Legs/Shipments"]
     F --> G["6. Publish DisruptionDetected"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef discard fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A input
+    class B,F process
+    class C decision
+    class E discard
+    class D,G outcome
 ```
 
 **Sequence:**
@@ -1197,6 +1316,17 @@ stateDiagram-v2
     ORIGIN_GATE_IN --> EXCEPTION
     IN_TRANSIT --> EXCEPTION
     EXCEPTION --> IN_TRANSIT : resolved
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef executing fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef cleared fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef success fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef exception fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class BOOKED,DOCUMENTATION_READY early
+    class ORIGIN_GATE_IN,LOADED,DEPARTED,IN_TRANSIT,ARRIVED,CUSTOMS_HOLD executing
+    class CUSTOMS_CLEARED cleared
+    class DELIVERED,POD_RECEIVED success
+    class EXCEPTION exception
 ```
 
 ```mermaid
@@ -1208,6 +1338,20 @@ flowchart LR
     D -->|valid| E["5a. Apply transition,<br/>recompute ETA"]
     D -->|invalid / out-of-order| F["5b. Buffer or raise<br/>data-quality Exception"]
     E --> G["6. Persist + publish MilestoneUpdated"]
+
+    classDef input fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef discard fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef alternate fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A input
+    class B process
+    class C,D decision
+    class Z discard
+    class E process
+    class F alternate
+    class G outcome
 ```
 
 **Sequence:**
@@ -1227,6 +1371,17 @@ flowchart LR
     B --> C[("3. Visibility Index<br/>(search-optimized, read-only)")]
     D["4. Shipper or Operator query"] --> C
     C --> E["5. Current status + predicted ETA<br/>+ active exceptions"]
+
+    classDef event fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef store fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef client fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A event
+    class B process
+    class C store
+    class D client
+    class E outcome
 ```
 
 **Sequence:**
@@ -1262,6 +1417,13 @@ flowchart LR
     B --> D["4. Assemble composite status:<br/>lifecycle stage + tracking detail + health"]
     C --> D
     D --> E["5. Exposed to Booking Portal / Operator Portal"]
+
+    classDef event fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A event
+    class B,C process
+    class D,E outcome
 ```
 
 **Sequence:**
@@ -1291,6 +1453,19 @@ flowchart LR
     E -->|yes| G["7. Log delivery receipt"]
     B -->|no match| H["discard"]
     F -.-> D
+
+    classDef event fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef retry fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef discard fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class A event
+    class B,E decision
+    class C,D process
+    class F retry
+    class G outcome
+    class H discard
 ```
 
 **Sequence:**
@@ -1313,6 +1488,13 @@ today, just automated.
 flowchart LR
     Shipper["Shipper"] -- "pays Invoice (AR)" --> Platform["Platform"]
     Platform -- "pays Settlement (AP)" --> Operator["Operator"]
+
+    classDef demand fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef hinge fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef supply fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class Shipper demand
+    class Platform hinge
+    class Operator supply
 ```
 
 | Entity | Represents | Direction |
@@ -1337,6 +1519,19 @@ stateDiagram-v2
     OVERDUE --> WRITTEN_OFF : uncollectable
     PAID --> [*]
     WRITTEN_OFF --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef active fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef executing fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef risk fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class DRAFT early
+    class ISSUED active
+    class PARTIALLY_PAID executing
+    class PAID success
+    class OVERDUE,DISPUTED risk
+    class WRITTEN_OFF terminalFail
 ```
 
 #### Settlement lifecycle (AP)
@@ -1349,6 +1544,15 @@ stateDiagram-v2
     PENDING --> DISPUTED : operator disputes the amount
     DISPUTED --> PENDING : dispute resolved, revised amount
     PAID --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef active fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef risk fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class PENDING early
+    class APPROVED active
+    class PAID success
+    class DISPUTED risk
 ```
 
 #### Invoice & settlement generation
@@ -1362,6 +1566,13 @@ flowchart TD
     D --> F["6. Issue Settlement to the operator (AP)<br/>due date from operator's terms"]
     E --> G["7. Margin = Invoice amount − Settlement amount"]
     F --> G
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A trigger
+    class B,C,D process
+    class E,F,G outcome
 ```
 
 **Sequence:**
@@ -1405,6 +1616,19 @@ flowchart TD
     F --> G{"6. Duration > free time?"}
     G -->|no| H["No charge"]
     G -->|yes| I["7. Charge = (duration − free time) × rate/day,<br/>billed per the Incoterm matrix (§4.1)"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef risk fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef neutral fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef charge fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A,E trigger
+    class B,G decision
+    class C risk
+    class D,F neutral
+    class H success
+    class I charge
 ```
 
 **Sequence:**
@@ -1430,6 +1654,17 @@ flowchart TD
     E --> F{"6. Still unpaid past a<br/>credit-risk threshold?"}
     F -->|yes| G["7. New Bookings from this shipper<br/>blocked at Confirm time"]
     F -->|no| H["Booking eligibility unaffected"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef risk fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    class A,B trigger
+    class C,F decision
+    class D,E risk
+    class G terminalFail
+    class H success
 ```
 
 **Sequence:**
@@ -1454,6 +1689,17 @@ flowchart TD
     D -->|no| F["Quote expires — re-quote<br/>at the current rate (§4.4)"]
     E --> G["6. Settlement to the operator stays in<br/>their currency — no conversion needed"]
     G --> H["7. Platform absorbs any FX movement<br/>between quote-lock and settlement"]
+
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef success fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef neutral fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef hinge fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A,B,C process
+    class D decision
+    class E,G success
+    class F neutral
+    class H hinge
 ```
 
 **Sequence:**
@@ -1486,6 +1732,19 @@ flowchart TD
     G --> I["7. Compute estimated duty from<br/>HS code + destination tariff schedule"]
     H --> I
     I --> J["8. Duty folds into the Quote's price,<br/>then the Invoice's accessorials"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef neutral fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A trigger
+    class B,E process
+    class C,F decision
+    class D terminalFail
+    class G,H neutral
+    class I,J outcome
 ```
 
 **Sequence:**
@@ -1552,6 +1811,15 @@ stateDiagram-v2
     ISSUED --> AMENDED : correction needed
     AMENDED --> ISSUED : re-issued
     ISSUED --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef executing fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef risk fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class REQUIRED early
+    class DRAFT executing
+    class ISSUED success
+    class AMENDED risk
 ```
 
 #### System-generated documents
@@ -1596,6 +1864,17 @@ flowchart TD
     C --> D{"4. Every document gating this<br/>milestone is ISSUED?"}
     D -->|yes| E["5. Transition allowed"]
     D -->|no| F["6. Transition blocked;<br/>Exception raised — missing document"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef decision fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef success fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class A trigger
+    class B process
+    class C,D decision
+    class E success
+    class F terminalFail
 ```
 
 **Sequence:**
@@ -1646,6 +1925,15 @@ flowchart TD
     C --> D["4. PO confirmation auto-creates a Booking<br/>(Supplier's location → shipper's destination)"]
     D --> E["5. Booking flows through the existing<br/>demand/supply/matching pipeline unchanged"]
     E --> F["6. Supplier performance tracked —<br/>feeds future forecast confidence"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef hinge fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef downstream fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    class A trigger
+    class B,C process
+    class D hinge
+    class E,F downstream
 ```
 
 **Sequence:**
@@ -1670,6 +1958,17 @@ stateDiagram-v2
     FULFILLED --> [*]
     CANCELLED --> [*]
     REJECTED --> [*]
+
+    classDef early fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gating fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef hinge fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    class DRAFT early
+    class SENT,CONFIRMED gating
+    class BOOKING_CREATED hinge
+    class FULFILLED success
+    class CANCELLED,REJECTED terminalFail
 ```
 
 ---
@@ -1707,6 +2006,15 @@ flowchart TD
     C --> D["4. Adapter registered against<br/>the Ingestion & Adapter Layer"]
     D --> E["5. Inbound requests authenticated + authorized<br/>at the boundary (§14) before reaching the adapter"]
     E --> F["6. Canonical events published to the bus —<br/>every existing reactor picks them up automatically"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gate fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef outcome fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A trigger
+    class B,E gate
+    class C,D process
+    class F outcome
 ```
 
 **Sequence:**
@@ -1904,6 +2212,13 @@ flowchart TB
     VisGlobal --> BPB
     VisGlobal --> OPA
     VisGlobal --> OPB
+
+    classDef regionA fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef regionB fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef global fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class BPA,OPA,StoreA,BusA regionA
+    class BPB,OPB,StoreB,BusB regionB
+    class GlobalIndex,GlobalMatch,VisGlobal global
 ```
 
 **How to read this diagram:** Bookings and supply are regional — a shipper's or
@@ -2065,6 +2380,7 @@ Disruption, Milestone, Visibility, Communication) never grow a new `if (mode == 
 ### 11.1 Carrier feed outage
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Carrier
@@ -2073,14 +2389,18 @@ sequenceDiagram
     participant VisibilitySvc
     participant Ops as Ops/Planner
 
+    rect rgb(254, 243, 199)
     Note over Carrier: t=0 — carrier's event feed goes down
     Ingestion->>Ingestion: heartbeat check — no events for 30 min
     Ingestion->>MilestoneSvc: mark affected legs STALE
     MilestoneSvc->>VisibilitySvc: publish StaleDataFlag
     VisibilitySvc-->>Ops: shows "last known status, feed degraded" banner
+    end
+    rect rgb(209, 250, 229)
     Note over Carrier: t=45min — feed recovers, backlog replays
     Carrier->>Ingestion: replay buffered events (in order)
     Ingestion->>MilestoneSvc: process backlog, reconcile by event timestamp
+    end
 ```
 
 **Sequence:**
@@ -2098,6 +2418,15 @@ flowchart TD
     C --> D["4. Emit ONE port-level Disruption<br/>instead of 500 individual ones"]
     D --> E["5. Replanning prioritizes by SLA risk<br/>(highest-value / soonest-due first)"]
     E --> F["6. Communication batches notifications<br/>per affected customer, not per shipment"]
+
+    classDef trigger fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef hinge fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    classDef outcome fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    class A trigger
+    class B,C process
+    class D hinge
+    class E,F outcome
 ```
 
 **Sequence:**
@@ -2111,6 +2440,7 @@ flowchart TD
 ### 11.3 Concurrent booking race on the last unit of capacity
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant BookingA
@@ -2118,14 +2448,20 @@ sequenceDiagram
     participant MatchEngine as Matching Engine
     participant Offering as CapacityOffering (1 unit left)
 
+    rect rgb(224, 231, 255)
     BookingA->>MatchEngine: submit demand
     BookingB->>MatchEngine: submit demand (same offering, same instant)
+    end
+    rect rgb(254, 243, 199)
     MatchEngine->>Offering: compare-and-decrement (A)
     Offering-->>MatchEngine: success — 0 units left
     MatchEngine->>Offering: compare-and-decrement (B)
     Offering-->>MatchEngine: fails — 0 units left
+    end
+    rect rgb(209, 250, 229)
     MatchEngine-->>BookingA: MATCHED → proceeds to Planning Engine
     MatchEngine-->>BookingB: UNMATCHED → open-demand board
+    end
 ```
 
 **Sequence:**
@@ -2334,6 +2670,19 @@ flowchart TD
     G --> H{"6. Idempotency check<br/>(eventId / nonce)"}
     H -->|replay| I["Discard silently — already processed"]
     H -->|new| J["7. Process — normalize to a<br/>canonical event, publish to the bus"]
+
+    classDef trigger fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef gate fill:#8e6fce,stroke:#4d2e8a,color:#ffffff
+    classDef terminalFail fill:#a8271f,stroke:#6b1a14,color:#ffffff
+    classDef process fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef neutral fill:#6b7785,stroke:#3d454e,color:#ffffff
+    classDef success fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class A,B trigger
+    class C,E,H gate
+    class D,F terminalFail
+    class G process
+    class I neutral
+    class J success
 ```
 
 **Sequence:**

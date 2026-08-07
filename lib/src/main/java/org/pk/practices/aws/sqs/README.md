@@ -48,6 +48,15 @@ stateDiagram-v2
     InFlight --> DeadLetter: visibility timeout expires<br/>AND receiveCount >= maxReceiveCount
     Deleted --> [*]
     DeadLetter --> [*]: stays here for manual inspection/replay
+
+    classDef available fill:#4a90d9,stroke:#1c4e78,color:#ffffff
+    classDef inflight fill:#e8965a,stroke:#a85c1f,color:#1a1a1a
+    classDef success fill:#2ea88f,stroke:#146b58,color:#ffffff
+    classDef dlq fill:#d9a521,stroke:#8a6a0f,color:#1a1a1a
+    class Available available
+    class InFlight inflight
+    class Deleted success
+    class DeadLetter dlq
 ```
 
 A message is in exactly one of these states at a time. `Available` and
@@ -63,6 +72,7 @@ again"; the next thing that looks at the queue just finds it there.
 ## Redelivery and the Stale Receipt Handle
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant Producer
@@ -71,19 +81,25 @@ sequenceDiagram
     participant ConsumerB as Consumer B
     participant DLQ as Dead-letter queue
 
+    rect rgb(224, 231, 255)
     Producer->>Queue: sendMessage(body)
     Queue-->>Producer: messageId
     ConsumerA->>Queue: receiveMessage(visibilityTimeout)
     Queue-->>ConsumerA: message + receiptHandle #1
     Note over Queue: message is now in-flight, invisible<br/>to other consumers until it expires
+    end
+    rect rgb(254, 243, 199)
     ConsumerA--xConsumerA: crashes before deleting
     Note over Queue: visibility timeout expires -<br/>message becomes available again
     ConsumerB->>Queue: receiveMessage(visibilityTimeout)
     Queue-->>ConsumerB: same message, receiveCount+1,<br/>brand new receiptHandle #2
+    end
+    rect rgb(209, 250, 229)
     ConsumerB->>Queue: deleteMessage(receiptHandle #1)
     Queue-->>ConsumerB: false - stale handle, already invalidated
     ConsumerB->>Queue: deleteMessage(receiptHandle #2)
     Queue-->>ConsumerB: true - removed for good
+    end
     Note over Queue,DLQ: if receiveCount had instead reached<br/>maxReceiveCount, the next timeout would<br/>redirect the message to the DLQ, not back<br/>to available
 ```
 
@@ -105,6 +121,7 @@ background worker so "consuming" means something more than a single manual
 poll:
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#1a1a1a', 'loopTextColor': '#1a1a1a'}}}%%
 sequenceDiagram
     autonumber
     participant You as You (console UI)
@@ -112,7 +129,10 @@ sequenceDiagram
     participant Consumer as QueueConsumer<br/>(background thread)
     participant DLQ as orders-queue-dlq
 
+    rect rgb(224, 231, 255)
     You->>Queue: sendMessage("order-1: pack crates")
+    end
+    rect rgb(254, 243, 199)
     loop every ~400ms while running
         Consumer->>Queue: receiveMessages(visibilityTimeout)
         alt message available
@@ -121,11 +141,12 @@ sequenceDiagram
             alt handler succeeds
                 Consumer->>Queue: deleteMessage(receiptHandle)
             else handler throws
-                Note over Consumer: leave it in flight —<br/>it expires and redelivers on its own
+                Note over Consumer: leave it in flight -<br/>it expires and redelivers on its own
             end
         else nothing available
             Note over Consumer: sleep, poll again
         end
+    end
     end
     Note over Queue,DLQ: a message whose handler keeps throwing<br/>eventually hits maxReceiveCount and<br/>lands in the DLQ, same as any other failure
 ```
