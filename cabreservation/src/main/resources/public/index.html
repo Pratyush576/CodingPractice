@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cab Reservation</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Cab Reservation</h1>
+  <div id="accountBar" class="account-bar hidden">
+    <span id="accountInfo"></span>
+    <button id="logoutBtn" type="button" class="secondary">Log out</button>
+  </div>
+</header>
+
+<main id="authSection">
+  <section>
+    <div class="tabs">
+      <button type="button" class="tab active" data-tab="login">Log in</button>
+      <button type="button" class="tab" data-tab="register">Create account</button>
+    </div>
+
+    <form id="loginForm">
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+      <button type="submit">Log in</button>
+      <div id="loginResult" class="result"></div>
+    </form>
+
+    <form id="registerForm" class="hidden">
+      <label>I am a
+        <select name="accountType">
+          <option value="rider">Rider</option>
+          <option value="driver">Driver</option>
+        </select>
+      </label>
+      <label>Full name <input name="name" required></label>
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+      <div id="vehicleFields" class="hidden">
+        <div class="row">
+          <label>Plate <input name="plate"></label>
+          <label>Product type
+            <select name="productType">
+              <option value="STANDARD">STANDARD</option>
+              <option value="XL">XL</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label>Make <input name="make"></label>
+          <label>Model <input name="model"></label>
+        </div>
+      </div>
+      <button type="submit">Create account</button>
+      <div id="registerResult" class="result"></div>
+    </form>
+  </section>
+</main>
+
+<main id="riderSection" class="hidden">
+  <section>
+    <h2>Request a Trip <span class="role">Rider</span></h2>
+    <form id="tripForm">
+      <div class="row">
+        <label>Pickup lat <input type="number" step="any" name="pickupLat" value="37.7750" required></label>
+        <label>Pickup lng <input type="number" step="any" name="pickupLng" value="-122.4183" required></label>
+      </div>
+      <div class="row">
+        <label>Dropoff lat <input type="number" step="any" name="dropoffLat" value="37.7849" required></label>
+        <label>Dropoff lng <input type="number" step="any" name="dropoffLng" value="-122.4094" required></label>
+      </div>
+      <button type="submit">Request trip</button>
+      <div id="tripResult" class="result"></div>
+    </form>
+  </section>
+
+  <section id="tripStatusSection" class="hidden">
+    <h2>Trip Status <span class="badge" id="tripStatusBadge"></span></h2>
+    <ul class="status-list" id="tripStatusList"></ul>
+    <button type="button" id="cancelTripBtn" class="secondary">Cancel trip</button>
+    <div id="cancelTripResult" class="result"></div>
+  </section>
+
+  <section>
+    <h2>Past Rides</h2>
+    <button type="button" id="refreshRiderHistoryBtn" class="secondary">Refresh</button>
+    <ul class="status-list" id="riderHistoryList"></ul>
+  </section>
+</main>
+
+<main id="driverSection" class="hidden">
+  <section>
+    <h2>Availability <span class="role">Driver</span></h2>
+    <p class="result">Going online requires a location — you can't be "available" without one (DESIGN.md §4.3).</p>
+    <div class="row">
+      <label>Lat <input type="number" step="any" id="driverLat" value="37.7749"></label>
+      <label>Lng <input type="number" step="any" id="driverLng" value="-122.4194"></label>
+    </div>
+    <div class="row">
+      <button type="button" id="goOnlineBtn">Go online</button>
+      <button type="button" id="goOfflineBtn" class="secondary">Go offline</button>
+      <button type="button" id="pingBtn" class="secondary">Send location ping</button>
+    </div>
+    <div id="driverResult" class="result"></div>
+  </section>
+
+  <section id="offerSection" class="hidden">
+    <h2>Trip Offer</h2>
+    <ul class="status-list" id="offerStatusList"></ul>
+    <div class="row">
+      <button type="button" id="acceptBtn">Accept</button>
+      <button type="button" id="rejectBtn" class="secondary">Reject</button>
+    </div>
+  </section>
+
+  <section id="activeTripSection" class="hidden">
+    <h2>Active Trip</h2>
+    <ul class="status-list" id="activeTripList"></ul>
+    <div class="row">
+      <button type="button" id="arrivedBtn">Mark arrived</button>
+      <button type="button" id="startBtn">Start trip</button>
+      <button type="button" id="completeBtn">Complete trip</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Past Trips</h2>
+    <button type="button" id="refreshDriverHistoryBtn" class="secondary">Refresh</button>
+    <ul class="status-list" id="driverHistoryList"></ul>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
