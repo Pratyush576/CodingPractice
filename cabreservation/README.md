@@ -62,20 +62,51 @@ Open **http://localhost:7071/** in a browser. Log in or create an account
 first (choose Rider or Driver); the panel you see afterward depends on your
 role:
 
-- **Rider** — a "Request a Trip" form (lat/lng inputs, defaulted to a San
-  Francisco example route) and a status panel that polls the trip every
-  second, shows its lifecycle progression, and offers a "Cancel trip" button
-  for as long as the trip is still cancellable (`REQUESTED`/`MATCHING`/
-  `MATCHED`/`DRIVER_ARRIVING` — it disappears once a trip is `IN_PROGRESS`),
-  plus a "Past Rides" history panel.
-- **Driver** — an availability panel (go online with a location, go offline,
-  send a location ping), plus panels that poll for a pending trip offer
-  (accept/reject) and, once matched, the active-trip controls (arrived /
+- **Rider** — a live map (Leaflet + OpenStreetMap tiles, free, no API key)
+  with pickup/dropoff pins that seed from your browser's real location if
+  you grant permission. Set either pin three ways: drag it directly, click
+  "Choose pickup/dropoff on map" then click anywhere on the map, or type
+  coordinates straight into the "Request a Trip" form — all three stay in
+  sync, and the form fields remain the actual source of truth sent to the
+  server. A status panel polls
+  the trip every second, shows its lifecycle progression, draws the driver's
+  live position on the map once one's assigned (or offered, during
+  `MATCHING`), and offers a "Cancel trip" button for as long as the trip is
+  still cancellable (`REQUESTED`/`MATCHING`/`MATCHED`/`DRIVER_ARRIVING` — it
+  disappears once a trip is `IN_PROGRESS`), plus a "Past Rides" history panel.
+- **Driver** — a live map showing your own position, continuously tracked
+  from the browser's real GPS via `watchPosition` (dragging the marker or
+  editing the lat/lng fields still overrides it manually — useful for
+  simulating multiple drivers from one machine, since real GPS would
+  otherwise report the same spot for all of them); an availability panel
+  (go online, go offline, send a location ping) that also auto-pings your
+  current position to the server every ~4s while online; plus panels that
+  poll for a pending trip offer (accept/reject, with pickup/dropoff pins
+  drawn on the map) and, once matched, the active-trip controls (arrived /
   start / complete), plus a "Past Trips" history panel.
 
-This UI was built and verified via `curl` against every endpoint it calls,
-but hasn't been click-tested in an actual browser from this environment —
-worth exercising once yourself before relying on it.
+The moment a trip goes `IN_PROGRESS` (driver taps "Start trip"), both maps
+draw the actual road route from pickup to dropoff — a real driving path, not
+a straight line — sourced live from OSRM's public routing API. The route
+disappears again once the trip leaves `IN_PROGRESS` (completed or
+cancelled), and a brand-new trip always fetches its own fresh route rather
+than reusing a stale one.
+
+Map tiles come straight from `tile.openstreetmap.org`, route geometry from
+`router.project-osrm.org`, and the Leaflet library from the `unpkg` CDN
+(pinned to a specific version with a Subresource Integrity hash) — all three
+require outbound internet access from the browser, unlike the rest of this
+app which is fully local. OSRM's public server is a free, no-API-key
+best-effort demo service, not guaranteed uptime or throughput — if it's
+unreachable or rate-limited, the route line is silently skipped and the
+pickup/dropoff pins alone still convey the trip.
+
+This UI was built and its data flow verified via `curl` against every
+endpoint it calls (including confirming a driver's `lat`/`lng` actually
+updates in the rider's response after a location ping), but hasn't been
+click-tested in an actual browser from this environment — worth exercising
+once yourself before relying on it, especially the geolocation permission
+prompts and marker dragging.
 
 ## Try it via curl
 

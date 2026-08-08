@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cab Reservation</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body>
 
@@ -64,6 +68,14 @@
 <main id="riderSection" class="hidden">
   <section>
     <h2>Request a Trip <span class="role">Rider</span></h2>
+    <p class="hint">Pickup starts at your device's location if you allow it. Tap "Choose on map" then click
+      anywhere on the map to place that pin, or just drag the pins directly. The driver's live position
+      appears here too once you're matched.</p>
+    <div class="row">
+      <button type="button" id="pickPickupBtn" class="secondary">Choose pickup on map</button>
+      <button type="button" id="pickDropoffBtn" class="secondary">Choose dropoff on map</button>
+    </div>
+    <div id="riderMap" class="map"></div>
     <form id="tripForm">
       <div class="row">
         <label>Pickup lat <input type="number" step="any" name="pickupLat" value="37.7750" required></label>
@@ -96,6 +108,9 @@
   <section>
     <h2>Availability <span class="role">Driver</span></h2>
     <p class="result">Going online requires a location — you can't be "available" without one (DESIGN.md §4.3).</p>
+    <p class="hint">Your marker tracks your device's real GPS position while online, auto-pinging every few
+      seconds. Drag it (or edit the fields) to override — handy for testing without actually moving.</p>
+    <div id="driverMap" class="map"></div>
     <div class="row">
       <label>Lat <input type="number" step="any" id="driverLat" value="37.7749"></label>
       <label>Lng <input type="number" step="any" id="driverLng" value="-122.4194"></label>

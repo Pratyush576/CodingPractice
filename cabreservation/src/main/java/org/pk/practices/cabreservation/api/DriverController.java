@@ -54,7 +54,7 @@ public class DriverController {
 
     private TripView enrich(Trip trip) {
         PartyInfo rider = riderRepository.findById(trip.riderId())
-                .map(r -> new PartyInfo(r.riderId(), r.name(), r.rating(), null))
+                .map(r -> new PartyInfo(r.riderId(), r.name(), r.rating(), null, null, null))
                 .orElse(null);
         PartyInfo driver = trip.driverId() == null ? null : toDriverPartyInfo(trip.driverId());
         PartyInfo offeredDriver = trip.offeredDriverId() == null ? null : toDriverPartyInfo(trip.offeredDriverId());
@@ -64,7 +64,7 @@ public class DriverController {
     private PartyInfo toDriverPartyInfo(String driverId) {
         return driverRepository.findById(driverId).map(d -> {
             VehicleInfo vehicle = driverRepository.findVehicleByDriverId(driverId).map(VehicleInfo::of).orElse(null);
-            return new PartyInfo(d.driverId(), d.name(), d.rating(), vehicle);
+            return new PartyInfo(d.driverId(), d.name(), d.rating(), vehicle, d.lastLat(), d.lastLng());
         }).orElse(null);
     }
 

@@ -151,15 +151,15 @@ public class TripController {
                 .toList();
     }
 
-    /** A rider needs the cab's plate/make/model to spot their ride, not just the driver's name — so vehicle comes along with every driver PartyInfo. */
+    /** A rider needs the cab's plate/make/model and live position to spot their ride, not just the driver's name. */
     private PartyInfo toDriverPartyInfo(String driverId) {
         return driverRepository.findById(driverId).map(driver -> {
             VehicleInfo vehicle = driverRepository.findVehicleByDriverId(driverId).map(VehicleInfo::of).orElse(null);
-            return new PartyInfo(driver.driverId(), driver.name(), driver.rating(), vehicle);
+            return new PartyInfo(driver.driverId(), driver.name(), driver.rating(), vehicle, driver.lastLat(), driver.lastLng());
         }).orElse(null);
     }
 
     private static PartyInfo toPartyInfo(Rider rider) {
-        return new PartyInfo(rider.riderId(), rider.name(), rider.rating(), null);
+        return new PartyInfo(rider.riderId(), rider.name(), rider.rating(), null, null, null);
     }
 }
