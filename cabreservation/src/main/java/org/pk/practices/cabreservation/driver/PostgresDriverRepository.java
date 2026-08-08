@@ -52,7 +52,7 @@ public class PostgresDriverRepository implements DriverRepository {
                     throw e;
                 }
             }
-            String vehicleSql = "INSERT INTO vehicles (vehicle_id, driver_id, plate, make, model, product_type) VALUES (?, ?, ?, ?, ?, ?)";
+            String vehicleSql = "INSERT INTO vehicles (vehicle_id, driver_id, plate, make, model, product_type, car_icon) VALUES (?, ?, ?, ?, ?, ?, ?)";
             try (PreparedStatement statement = connection.prepareStatement(vehicleSql)) {
                 statement.setString(1, vehicle.vehicleId());
                 statement.setString(2, vehicle.driverId());
@@ -60,6 +60,7 @@ public class PostgresDriverRepository implements DriverRepository {
                 statement.setString(4, vehicle.make());
                 statement.setString(5, vehicle.model());
                 statement.setString(6, vehicle.productType());
+                statement.setString(7, vehicle.carIcon().name());
                 statement.executeUpdate();
             }
             return null;
@@ -92,10 +93,24 @@ public class PostgresDriverRepository implements DriverRepository {
                             rs.getString("plate"),
                             rs.getString("make"),
                             rs.getString("model"),
-                            rs.getString("product_type")
+                            rs.getString("product_type"),
+                            CarIcon.valueOf(rs.getString("car_icon"))
                     ));
                 }
             }
+        });
+    }
+
+    @Override
+    public void updateCarIcon(String driverId, CarIcon carIcon) {
+        database.withTransaction(connection -> {
+            String sql = "UPDATE vehicles SET car_icon = ? WHERE driver_id = ?";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, carIcon.name());
+                statement.setString(2, driverId);
+                statement.executeUpdate();
+            }
+            return null;
         });
     }
 

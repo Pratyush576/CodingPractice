@@ -505,6 +505,24 @@ platforms only, with Web excluded rather than deferred. The Rider App has no
 such constraint — it only *consumes* the WebSocket stream while foregrounded
 — which is why Web is a fully in-scope rider surface today.
 
+**Implementation status:** the buildable version in
+[`cabreservation/`](../../../../../../../../../cabreservation/README.md) does not
+yet have this WebSocket tier or a backend Map/Routing Provider — both remain
+correct as the production-scale target, not superseded by what follows.
+What's actually running today is a deliberately simpler Phase 1/2 stand-in:
+the browser polls `GET /v1/trips/{id}` every second (the same "client
+polling" option this section's own table ranks below WebSocket), and instead
+of a backend routing abstraction, the browser calls a public third-party
+routing API ([OSRM](https://project-osrm.org/)) directly to draw the
+route line and compute both ETAs — "driver arriving in ~X" while
+`DRIVER_ARRIVING`, "time to destination" while `IN_PROGRESS`. This is fine
+at demo scale (one browser tab polling one trip) but doesn't hold up at
+[§5](#5-scalability)'s numbers: every open tab hitting a free public routing
+API directly, with no backend fan-out or connection reuse, is exactly the
+kind of per-client external-dependency load this design's real architecture
+is meant to avoid. The WebSocket + backend `RoutingProvider` upgrade
+described above is still the intended next step, not an abandoned idea.
+
 ### 4.6 Pricing & Fare Calculation
 
 ```mermaid
@@ -908,6 +926,12 @@ the collector-to-alert-manager pipeline itself would be the same shape either wa
 | Pricing scope | Base + distance + time only, surge left as a `PricingStrategy` extension point | Full surge/demand-pricing engine designed up front | A less "Uber-complete" pricing story now, in exchange for not over-building a subsystem outside this pass's chosen scope |
 | Driver payout timing | Per-trip instant payout ([§4.7](#47-payment--driver-payouts)) | Batched payout on a fixed cadence | More, smaller transfers (and their per-transaction fees), in exchange for the simplest first buildable version — no separate accrual ledger or scheduled batch job |
 | Invoicing & tax depth | `Invoice` exists as a real, itemized, immutable document with tax as a pluggable `TaxStrategy` line item; per-jurisdiction rate tables and corporate/consolidated billing are not designed | Full multi-jurisdiction tax compliance and corporate billing designed up front | A less "enterprise-ready" billing story now, in exchange for not over-building a compliance subsystem outside this pass's chosen scope — the same call as surge pricing |
+| Account/session model | Lightweight PBKDF2-hashed password + opaque bearer-token session (mirroring this repo's [Supply Chain](../supplychain/DESIGN.md) auth pattern) — not designed anywhere above, added when the buildable version needed a real multi-user identity story | No auth — trust an `accountId` the caller supplies, deferred to an API Gateway concern | A first-party auth surface this doc didn't originally scope, in exchange for a system that's actually usable by more than one trusted caller |
+
+*Real-time updates' "Chosen" column above is the production-scale target,
+not what's running today — see [§4.5](#45-real-time-location-tracking--eta)'s
+Implementation Status for the interim client-polling + direct-to-OSRM
+version actually built.*
 
 ---
 
@@ -965,3 +989,17 @@ in-memory implementation as the first buildable version — `GeoIndex`,
 `PaymentGateway`, and `PayoutProvider` are interfaces specifically so the
 in-memory demo implementation and a real Redis/Stripe/bank-rail-backed one
 are swappable without touching `MatchingEngine` or `TripService`.
+
+**Implementation note:** the layout actually built diverged from the
+in-tree/in-memory shape above — see [§11](#11-major-design-decisions--trade-offs)'s
+phased-build decision to make this a **standalone module with real
+infrastructure** (its own `build.gradle.kts`, a real Postgres `TripStore`
+and `DriverRepository`, real Redis for `GeoIndex`) rather than an in-memory
+POC, plus the `auth/` package the Account/session decision above added and
+an `api/` package (`AuthController`, `TripController`, `DriverController`)
+that isn't shown here at all since this proposed layout predates having a
+real HTTP surface. The authoritative, up-to-date structure lives in
+[`cabreservation/`](../../../../../../../../../cabreservation/README.md)
+itself, not in this section — treat what's above as the original design
+intent for the package *boundaries* (rider/driver/trip/geo/matching/pricing/
+payment/rating/eventbus still hold), not as a current file listing.

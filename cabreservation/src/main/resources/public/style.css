@@ -137,6 +137,16 @@ button.armed { background: var(--accent); color: var(--accent-contrast); border-
 
 .hint { font-size: 0.8rem; color: var(--muted); margin: -0.4rem 0 0.75rem; }
 
+.eta {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+}
+
 .map {
   height: 280px;
   border-radius: var(--radius);
@@ -161,5 +171,17 @@ button.armed { background: var(--accent); color: var(--accent-contrast); border-
 }
 .marker-pin.pickup { background: #2ea88f; }
 .marker-pin.dropoff { background: #a8271f; }
-.marker-pin.driver { background: #d9a521; }
 .marker-pin.self { background: #4a90d9; }
+
+.car-icon-row { align-items: flex-end; }
+.car-icon-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  flex: 0 0 auto;
+}

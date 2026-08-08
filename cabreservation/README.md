@@ -49,7 +49,12 @@ identity with a role flag:
 - **Rider** — can request trips, view/cancel their own.
 - **Driver** — can go online/offline, send location pings, and
   accept/reject trip offers. Going online *requires* a location — a driver
-  can't be "available but unlocatable" (§4.3).
+  can't be "available but unlocatable" (§4.3). At registration, a driver also
+  picks a **car icon color** (Blue/Red/Green/Gold/Purple) — purely cosmetic,
+  it's how that driver's marker renders on a rider's map instead of a
+  generic pin — and can change it anytime afterward via
+  `PATCH /v1/drivers/me/car-icon` (`GET /v1/drivers/me` returns the driver's
+  own current choice, e.g. to pre-fill a picker).
 
 Sessions are opaque bearer tokens held in memory (`SessionManager`, 8-hour
 TTL) — they don't survive an app restart. This is the minimal version of a
@@ -68,7 +73,11 @@ role:
   "Choose pickup/dropoff on map" then click anywhere on the map, or type
   coordinates straight into the "Request a Trip" form — all three stay in
   sync, and the form fields remain the actual source of truth sent to the
-  server. A status panel polls
+  server. The driver's marker renders as a small car icon in whatever color
+  that driver has currently chosen (registration default, or a later
+  update — see Accounts above), not a generic pin — the same shape used for
+  the outstanding offer's driver during `MATCHING` and the assigned driver
+  afterward. A status panel polls
   the trip every second, shows its lifecycle progression, draws the driver's
   live position on the map once one's assigned (or offered, during
   `MATCHING`), and offers a "Cancel trip" button for as long as the trip is
@@ -80,17 +89,27 @@ role:
   simulating multiple drivers from one machine, since real GPS would
   otherwise report the same spot for all of them); an availability panel
   (go online, go offline, send a location ping) that also auto-pings your
-  current position to the server every ~4s while online; plus panels that
+  current position to the server every ~4s while online; a "Vehicle" panel
+  to change your car icon at any time (pre-filled with your current choice,
+  with a live preview as you pick); plus panels that
   poll for a pending trip offer (accept/reject, with pickup/dropoff pins
   drawn on the map) and, once matched, the active-trip controls (arrived /
   start / complete), plus a "Past Trips" history panel.
 
 The moment a trip goes `IN_PROGRESS` (driver taps "Start trip"), both maps
 draw the actual road route from pickup to dropoff — a real driving path, not
-a straight line — sourced live from OSRM's public routing API. The route
-disappears again once the trip leaves `IN_PROGRESS` (completed or
-cancelled), and a brand-new trip always fetches its own fresh route rather
-than reusing a stale one.
+a straight line — sourced live from OSRM's public routing API, alongside an
+"Estimated time to destination" callout (same OSRM `duration`, so rider and
+driver see the same number). The route disappears again once the trip
+leaves `IN_PROGRESS` (completed or cancelled), and a brand-new trip always
+fetches its own fresh route rather than reusing a stale one.
+
+While a trip is `DRIVER_ARRIVING`, the rider additionally sees a
+"Driver arriving in ~X min" callout — a separate OSRM route from the
+driver's current live position to the pickup point, refetched roughly every
+10 seconds since (unlike the destination ETA) the driver is actually moving
+during this phase. This one is rider-only; there's no equivalent on the
+driver's own screen.
 
 Map tiles come straight from `tile.openstreetmap.org`, route geometry from
 `router.project-osrm.org`, and the Leaflet library from the `unpkg` CDN

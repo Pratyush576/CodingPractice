@@ -2,6 +2,7 @@ package org.pk.practices.cabreservation.auth;
 
 import org.pk.practices.cabreservation.common.AuthenticationException;
 import org.pk.practices.cabreservation.common.ValidationException;
+import org.pk.practices.cabreservation.driver.CarIcon;
 import org.pk.practices.cabreservation.driver.Driver;
 import org.pk.practices.cabreservation.driver.DriverRepository;
 import org.pk.practices.cabreservation.driver.DriverStatus;
@@ -66,6 +67,7 @@ public class AuthService {
         String vehicleId = UUID.randomUUID().toString();
         String productType = request.vehicle().productType() == null || request.vehicle().productType().isBlank()
                 ? "STANDARD" : request.vehicle().productType().trim().toUpperCase();
+        CarIcon carIcon = CarIcon.parse(request.vehicle().carIcon());
 
         Driver driver = new Driver(
                 driverId,
@@ -80,7 +82,7 @@ public class AuthService {
                 Instant.now()
         );
         Vehicle vehicle = new Vehicle(vehicleId, driverId, request.vehicle().plate(), request.vehicle().make(),
-                request.vehicle().model(), productType);
+                request.vehicle().model(), productType, carIcon);
         driverRepository.insert(driver, vehicle); // throws ConflictException on a duplicate email
         return toLoginResult(driver);
     }

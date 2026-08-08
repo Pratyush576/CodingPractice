@@ -84,6 +84,7 @@ function render() {
     initDriverMap();
     pollDriverActiveTrip();
     loadDriverHistory();
+    loadDriverProfile();
   }
 }
 
@@ -106,6 +107,24 @@ let driverAutoPingTimer = null;
 
 function pinIcon(className) {
   return L.divIcon({ className: '', html: `<div class="marker-pin ${className}"></div>`, iconSize: [22, 22], iconAnchor: [11, 22] });
+}
+
+// The driver-chosen "car icon" — a simple two-rectangle-plus-wheels silhouette in the driver's picked
+// color, used both for the registration-form preview and for that driver's marker on a rider's map.
+const CAR_ICON_COLORS = { BLUE: '#4a90d9', RED: '#a8271f', GREEN: '#2ea88f', GOLD: '#d9a521', PURPLE: '#8e6fce' };
+
+function carIconSvg(colorKey) {
+  const color = CAR_ICON_COLORS[colorKey] || CAR_ICON_COLORS.BLUE;
+  return `<svg width="28" height="22" viewBox="0 0 28 22" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="8" width="24" height="8" rx="3" fill="${color}" stroke="#1a1a1a" stroke-width="1"/>
+    <rect x="7" y="3" width="12" height="7" rx="2" fill="${color}" stroke="#1a1a1a" stroke-width="1"/>
+    <circle cx="8" cy="17" r="3" fill="#1a1a1a"/>
+    <circle cx="20" cy="17" r="3" fill="#1a1a1a"/>
+  </svg>`;
+}
+
+function carDivIcon(colorKey) {
+  return L.divIcon({ className: '', html: carIconSvg(colorKey), iconSize: [28, 22], iconAnchor: [14, 17] });
 }
 
 function addOsmTiles(map) {
@@ -201,15 +220,25 @@ function initRiderMap() {
 }
 
 /** Shows the driver's live position once one exists — the assigned driver if matched, otherwise whoever the outstanding MATCHING offer went to. */
+/**
+ * The icon has to be refreshed every call, not just set once at marker
+ * creation — otherwise a rejected offer that redispatches to a *different*
+ * driver (or that same driver updating their car icon mid-flow) leaves the
+ * marker stuck showing whichever driver/icon was first rendered for this
+ * trip, no matter who's actually assigned now.
+ */
 function updateRiderDriverMarker(trip) {
   if (!riderMap) return;
   const party = trip.driver || trip.offeredDriver;
   if (party && party.lat != null && party.lng != null) {
     const pos = [party.lat, party.lng];
+    const icon = carDivIcon(party.vehicle && party.vehicle.carIcon);
     if (riderDriverMarker) {
       riderDriverMarker.setLatLng(pos);
+      riderDriverMarker.setIcon(icon);
+      riderDriverMarker.setTooltipContent(driverLabel(party));
     } else {
-      riderDriverMarker = L.marker(pos, { icon: pinIcon('driver') }).addTo(riderMap).bindTooltip(driverLabel(party));
+      riderDriverMarker = L.marker(pos, { icon }).addTo(riderMap).bindTooltip(driverLabel(party));
     }
   } else if (riderDriverMarker) {
     riderMap.removeLayer(riderDriverMarker);
@@ -275,38 +304,63 @@ function updateDriverTripMarkers(trip) {
   }
 }
 
-// ---- Route (shown on both maps while a trip is IN_PROGRESS) ----
+// ---- Route + ETA ----
 // OSRM's public demo server — free, no API key, but a best-effort service not meant for production
-// traffic. If it's unreachable or rate-limited, we just skip the route line rather than block the UI;
-// the pickup/dropoff pins alone still convey the trip.
+// traffic. If it's unreachable or rate-limited, we just skip the route line/ETA rather than block the
+// UI; the pickup/dropoff pins alone still convey the trip.
 
 let riderRouteLine = null;
 let riderRouteTripId = null;
 let driverRouteLine = null;
 let driverRouteTripId = null;
 
-async function fetchRouteLatLngs(pickupLat, pickupLng, dropoffLat, dropoffLng) {
+// The driver-arriving ETA has to be refetched periodically (the driver keeps moving toward pickup) —
+// throttled rather than fetched on every 1s poll tick, to stay reasonable about hitting a free public API.
+let riderArrivingEtaTripId = null;
+let riderArrivingEtaFetchedAt = 0;
+const ARRIVING_ETA_REFRESH_MS = 10000;
+
+async function fetchRoute(fromLat, fromLng, toLat, toLng) {
   try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${pickupLng},${pickupLat};${dropoffLng},${dropoffLat}?overview=full&geometries=geojson`;
+    const url = `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
     if (data.code !== 'Ok' || !data.routes || !data.routes.length) return null;
-    // GeoJSON coordinates are [lng, lat] — Leaflet wants [lat, lng].
-    return data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+    const route = data.routes[0];
+    return {
+      // GeoJSON coordinates are [lng, lat] — Leaflet wants [lat, lng].
+      latlngs: route.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+      durationSeconds: route.duration,
+    };
   } catch (err) {
     return null;
   }
 }
 
+function formatDuration(seconds) {
+  const totalMinutes = Math.round(seconds / 60);
+  if (totalMinutes < 1) return 'under a minute';
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}
+
+function setEta(elementId, text) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
+}
+
 async function showRiderRoute(trip) {
   if (!riderMap || riderRouteTripId === trip.tripId) return;
-  const latlngs = await fetchRouteLatLngs(trip.pickupLat, trip.pickupLng, trip.dropoffLat, trip.dropoffLng);
-  if (!latlngs || riderRouteTripId === trip.tripId) return; // trip may have moved on while the request was in flight
+  const route = await fetchRoute(trip.pickupLat, trip.pickupLng, trip.dropoffLat, trip.dropoffLng);
+  if (!route || riderRouteTripId === trip.tripId) return; // trip may have moved on while the request was in flight
   clearRiderRoute();
-  riderRouteLine = L.polyline(latlngs, { color: '#4a90d9', weight: 4, opacity: 0.85 }).addTo(riderMap);
+  riderRouteLine = L.polyline(route.latlngs, { color: '#4a90d9', weight: 4, opacity: 0.85 }).addTo(riderMap);
   riderRouteTripId = trip.tripId;
   riderMap.fitBounds(riderRouteLine.getBounds(), { padding: [24, 24] });
+  setEta('tripEta', `Estimated time to destination: ${formatDuration(route.durationSeconds)}`);
 }
 
 function clearRiderRoute() {
@@ -315,14 +369,28 @@ function clearRiderRoute() {
   riderRouteTripId = null;
 }
 
+/** Driver -> pickup ETA, shown to the rider while DRIVER_ARRIVING. Refetched every ARRIVING_ETA_REFRESH_MS since the driver's position keeps changing; skipped entirely if we don't have their location yet. */
+async function updateRiderArrivingEta(trip) {
+  const driver = trip.driver;
+  if (!driver || driver.lat == null || driver.lng == null) return;
+  const now = Date.now();
+  const isNewTrip = riderArrivingEtaTripId !== trip.tripId;
+  if (!isNewTrip && now - riderArrivingEtaFetchedAt < ARRIVING_ETA_REFRESH_MS) return;
+  riderArrivingEtaFetchedAt = now;
+  riderArrivingEtaTripId = trip.tripId;
+  const route = await fetchRoute(driver.lat, driver.lng, trip.pickupLat, trip.pickupLng);
+  if (route) setEta('tripEta', `Driver arriving in ${formatDuration(route.durationSeconds)}`);
+}
+
 async function showDriverRoute(trip) {
   if (!driverMap || driverRouteTripId === trip.tripId) return;
-  const latlngs = await fetchRouteLatLngs(trip.pickupLat, trip.pickupLng, trip.dropoffLat, trip.dropoffLng);
-  if (!latlngs || driverRouteTripId === trip.tripId) return;
+  const route = await fetchRoute(trip.pickupLat, trip.pickupLng, trip.dropoffLat, trip.dropoffLng);
+  if (!route || driverRouteTripId === trip.tripId) return;
   clearDriverRoute();
-  driverRouteLine = L.polyline(latlngs, { color: '#4a90d9', weight: 4, opacity: 0.85 }).addTo(driverMap);
+  driverRouteLine = L.polyline(route.latlngs, { color: '#4a90d9', weight: 4, opacity: 0.85 }).addTo(driverMap);
   driverRouteTripId = trip.tripId;
   driverMap.fitBounds(driverRouteLine.getBounds(), { padding: [24, 24] });
+  setEta('driverTripEta', `Estimated time to destination: ${formatDuration(route.durationSeconds)}`);
 }
 
 function clearDriverRoute() {
@@ -359,6 +427,48 @@ document.querySelector('select[name="accountType"]').addEventListener('change', 
   document.getElementById('vehicleFields').classList.toggle('hidden', e.target.value !== 'driver');
 });
 
+const carIconSelect = document.getElementById('carIconSelect');
+const carIconPreview = document.getElementById('carIconPreview');
+function renderCarIconPreview() {
+  carIconPreview.innerHTML = carIconSvg(carIconSelect.value);
+}
+carIconSelect.addEventListener('change', renderCarIconPreview);
+renderCarIconPreview();
+
+// ---- Driver: update car icon after registration ----
+
+const updateCarIconSelect = document.getElementById('updateCarIconSelect');
+const updateCarIconPreview = document.getElementById('updateCarIconPreview');
+function renderUpdateCarIconPreview() {
+  updateCarIconPreview.innerHTML = carIconSvg(updateCarIconSelect.value);
+}
+updateCarIconSelect.addEventListener('change', renderUpdateCarIconPreview);
+renderUpdateCarIconPreview();
+
+async function loadDriverProfile() {
+  try {
+    const profile = await api('/v1/drivers/me');
+    if (profile.vehicle && profile.vehicle.carIcon) {
+      updateCarIconSelect.value = profile.vehicle.carIcon;
+      renderUpdateCarIconPreview();
+    }
+  } catch (err) {
+    // non-critical — the picker just falls back to its default selection
+  }
+}
+
+document.getElementById('updateCarIconBtn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('updateCarIconResult');
+  try {
+    await api('/v1/drivers/me/car-icon', { method: 'PATCH', body: JSON.stringify({ carIcon: updateCarIconSelect.value }) });
+    resultEl.textContent = 'Car icon updated — riders will see it on your next trip.';
+    resultEl.className = 'result success';
+  } catch (err) {
+    resultEl.textContent = err.message;
+    resultEl.className = 'result error';
+  }
+});
+
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
@@ -382,7 +492,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
   const path = isDriver ? '/v1/auth/register/driver' : '/v1/auth/register/rider';
   const payload = { name: form.get('name'), email: form.get('email'), password: form.get('password') };
   if (isDriver) {
-    payload.vehicle = { plate: form.get('plate'), make: form.get('make'), model: form.get('model'), productType: form.get('productType') };
+    payload.vehicle = { plate: form.get('plate'), make: form.get('make'), model: form.get('model'), productType: form.get('productType'), carIcon: form.get('carIcon') };
   }
   try {
     const result = await api(path, { method: 'POST', body: JSON.stringify(payload) });
@@ -423,6 +533,8 @@ document.getElementById('tripForm').addEventListener('submit', async (e) => {
     resultEl.textContent = '';
     currentTripId = trip.tripId;
     clearRiderRoute();
+    setEta('tripEta', '');
+    riderArrivingEtaTripId = null;
     document.getElementById('cancelTripResult').textContent = '';
     document.getElementById('tripStatusSection').classList.remove('hidden');
     if (pollTimer) clearInterval(pollTimer);
@@ -459,8 +571,13 @@ async function pollTripStatus(tripId) {
     updateRiderDriverMarker(trip);
     if (trip.status === 'IN_PROGRESS') {
       showRiderRoute(trip);
+    } else if (trip.status === 'DRIVER_ARRIVING') {
+      clearRiderRoute();
+      updateRiderArrivingEta(trip);
     } else {
       clearRiderRoute();
+      setEta('tripEta', '');
+      riderArrivingEtaTripId = null;
     }
     if (['COMPLETED', 'CANCELLED_BY_RIDER', 'CANCELLED_BY_DRIVER', 'NO_DRIVERS_FOUND'].includes(trip.status) && pollTimer) {
       clearInterval(pollTimer);
@@ -641,12 +758,14 @@ function renderDriverTrip(trip) {
       showDriverRoute(trip);
     } else {
       clearDriverRoute();
+      setEta('driverTripEta', '');
     }
   } else {
     offerSection.classList.add('hidden');
     activeSection.classList.add('hidden');
     updateDriverTripMarkers(null);
     clearDriverRoute();
+    setEta('driverTripEta', '');
   }
 }
 

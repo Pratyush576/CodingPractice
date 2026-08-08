@@ -9,6 +9,9 @@ public interface DriverRepository {
     Optional<Driver> findByEmail(String email);
     Optional<Vehicle> findVehicleByDriverId(String driverId);
 
+    /** Lets a driver change their car marker's color after registration — no CAS needed, purely cosmetic. */
+    void updateCarIcon(String driverId, CarIcon carIcon);
+
     /**
      * {@code UPDATE ... WHERE driver_id=? AND status=? AND version=?} — the
      * atomic compare-and-swap DESIGN.md §4.3 requires to fix the

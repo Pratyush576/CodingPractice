@@ -5,6 +5,8 @@ import io.javalin.http.Context;
 import org.pk.practices.cabreservation.auth.AccountType;
 import org.pk.practices.cabreservation.auth.AuthenticatedAccount;
 import org.pk.practices.cabreservation.common.AuthorizationException;
+import org.pk.practices.cabreservation.driver.CarIcon;
+import org.pk.practices.cabreservation.driver.Driver;
 import org.pk.practices.cabreservation.driver.DriverRepository;
 import org.pk.practices.cabreservation.driver.DriverService;
 import org.pk.practices.cabreservation.matching.MatchingEngine;
@@ -43,6 +45,24 @@ public class DriverController {
         app.post("/v1/drivers/location", this::location);
         app.post("/v1/drivers/offers/{tripId}/respond", this::respond);
         app.get("/v1/drivers/me/active-trip", this::activeTrip);
+        app.get("/v1/drivers/me", this::me);
+        app.patch("/v1/drivers/me/car-icon", this::updateCarIcon);
+    }
+
+    /** A driver's own profile — enough to pre-fill an "update my car icon" control with their current choice. */
+    private void me(Context ctx) {
+        String driverId = driverId(ctx);
+        Driver driver = driverRepository.findById(driverId).orElseThrow(() -> new io.javalin.http.NotFoundResponse());
+        VehicleInfo vehicle = driverRepository.findVehicleByDriverId(driverId).map(VehicleInfo::of).orElse(null);
+        ctx.json(new DriverProfile(driver.driverId(), driver.name(), vehicle));
+    }
+
+    /** Purely cosmetic — no CAS needed, unlike the status transitions below, since nothing else in the system reads carIcon for correctness. */
+    private void updateCarIcon(Context ctx) {
+        UpdateCarIconRequest request = ctx.bodyAsClass(UpdateCarIconRequest.class);
+        CarIcon carIcon = CarIcon.parse(request.carIcon());
+        driverRepository.updateCarIcon(driverId(ctx), carIcon);
+        ctx.status(204);
     }
 
     /** A pending offer or active trip — enriched with the rider's name, same "see the other party's details" requirement as TripController. */

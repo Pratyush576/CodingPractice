@@ -30,8 +30,12 @@ CREATE TABLE IF NOT EXISTS vehicles (
     plate TEXT NOT NULL,
     make TEXT,
     model TEXT,
-    product_type TEXT NOT NULL DEFAULT 'STANDARD'
+    product_type TEXT NOT NULL DEFAULT 'STANDARD',
+    car_icon TEXT NOT NULL DEFAULT 'BLUE'
 );
+-- schema.sql has no separate migration mechanism — it's just re-run on every startup — so an
+-- already-existing vehicles table (from before car_icon existed) needs this to actually gain the column.
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS car_icon TEXT NOT NULL DEFAULT 'BLUE';
 
 CREATE TABLE IF NOT EXISTS trips (
     trip_id TEXT PRIMARY KEY,
