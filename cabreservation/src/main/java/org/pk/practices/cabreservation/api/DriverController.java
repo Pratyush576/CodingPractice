@@ -10,11 +10,12 @@ import org.pk.practices.cabreservation.driver.Driver;
 import org.pk.practices.cabreservation.driver.DriverRepository;
 import org.pk.practices.cabreservation.driver.DriverService;
 import org.pk.practices.cabreservation.matching.MatchingEngine;
+import org.pk.practices.cabreservation.payment.PayoutRepository;
 import org.pk.practices.cabreservation.rider.RiderRepository;
 import org.pk.practices.cabreservation.trip.Trip;
 import org.pk.practices.cabreservation.trip.TripService;
 
-import java.util.Map;
+import java.util.List;
 
 /**
  * Every route here requires a DRIVER-type session — {@link AuthController#requireSession}
@@ -29,14 +30,17 @@ public class DriverController {
     private final TripService tripService;
     private final RiderRepository riderRepository;
     private final DriverRepository driverRepository;
+    private final PayoutRepository payoutRepository;
 
     public DriverController(DriverService driverService, MatchingEngine matchingEngine, TripService tripService,
-                             RiderRepository riderRepository, DriverRepository driverRepository) {
+                             RiderRepository riderRepository, DriverRepository driverRepository,
+                             PayoutRepository payoutRepository) {
         this.driverService = driverService;
         this.matchingEngine = matchingEngine;
         this.tripService = tripService;
         this.riderRepository = riderRepository;
         this.driverRepository = driverRepository;
+        this.payoutRepository = payoutRepository;
     }
 
     public void register(Javalin app) {
@@ -46,7 +50,24 @@ public class DriverController {
         app.post("/v1/drivers/offers/{tripId}/respond", this::respond);
         app.get("/v1/drivers/me/active-trip", this::activeTrip);
         app.get("/v1/drivers/me", this::me);
+        app.get("/v1/drivers/me/payouts", this::payouts);
         app.patch("/v1/drivers/me/car-icon", this::updateCarIcon);
+    }
+
+    /**
+     * A driver's full earnings history, most recent first — one row per completed trip they were paid
+     * out for. Time-window filtering (today/week/month/all) happens client-side over this full list,
+     * the same pattern trip history already uses, rather than a family of server-side query params.
+     */
+    private void payouts(Context ctx) {
+        List<PayoutView> views = payoutRepository.findByDriverId(driverId(ctx)).stream()
+                .map(payout -> new PayoutView(
+                        payout.payoutId(), payout.tripId(), payout.amount(), payout.status().name(),
+                        payout.providerReference(), payout.createdAt(),
+                        tripService.get(payout.tripId()).map(Trip::fareFinal).orElse(null)
+                ))
+                .toList();
+        ctx.json(views);
     }
 
     /** A driver's own profile — enough to pre-fill an "update my car icon" control with their current choice. */
@@ -65,11 +86,23 @@ public class DriverController {
         ctx.status(204);
     }
 
-    /** A pending offer or active trip — enriched with the rider's name, same "see the other party's details" requirement as TripController. */
+    /**
+     * A pending offer or active trip, enriched with the rider's name — same
+     * "see the other party's details" requirement as TripController. 200 +
+     * literal JSON {@code null} on no active trip, not a 404: this is the
+     * driver's normal, most-of-the-time state while online (polled every
+     * 1s), not an error condition — a 404 here would make the browser log
+     * a network-error console line on every idle poll tick. {@code ctx.json()}
+     * itself rejects a Java {@code null} outright (a Kotlin null-check), so
+     * the null body has to be written directly rather than through it.
+     */
     private void activeTrip(Context ctx) {
-        tripService.findActiveForDriver(driverId(ctx))
-                .map(this::enrich)
-                .ifPresentOrElse(ctx::json, () -> ctx.status(404).json(Map.of("error", "NO_ACTIVE_TRIP")));
+        TripView trip = tripService.findActiveForDriver(driverId(ctx)).map(this::enrich).orElse(null);
+        if (trip == null) {
+            ctx.contentType("application/json").result("null");
+        } else {
+            ctx.json(trip);
+        }
     }
 
     private TripView enrich(Trip trip) {

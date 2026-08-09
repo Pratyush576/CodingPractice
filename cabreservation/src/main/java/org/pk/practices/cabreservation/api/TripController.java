@@ -6,6 +6,7 @@ import org.pk.practices.cabreservation.auth.AccountType;
 import org.pk.practices.cabreservation.auth.AuthenticatedAccount;
 import org.pk.practices.cabreservation.common.AuthorizationException;
 import org.pk.practices.cabreservation.driver.DriverRepository;
+import org.pk.practices.cabreservation.payment.PaymentRepository;
 import org.pk.practices.cabreservation.rider.Rider;
 import org.pk.practices.cabreservation.rider.RiderRepository;
 import org.pk.practices.cabreservation.trip.CancelledBy;
@@ -28,14 +29,18 @@ public class TripController {
     private final TripService tripService;
     private final RiderRepository riderRepository;
     private final DriverRepository driverRepository;
+    private final PaymentRepository paymentRepository;
 
-    public TripController(TripService tripService, RiderRepository riderRepository, DriverRepository driverRepository) {
+    public TripController(TripService tripService, RiderRepository riderRepository, DriverRepository driverRepository,
+                           PaymentRepository paymentRepository) {
         this.tripService = tripService;
         this.riderRepository = riderRepository;
         this.driverRepository = driverRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     public void register(Javalin app) {
+        app.post("/v1/trips/estimate", this::estimate);
         app.post("/v1/trips", this::create);
         app.get("/v1/trips", this::list);
         app.get("/v1/trips/{id}", this::get);
@@ -43,6 +48,39 @@ public class TripController {
         app.post("/v1/trips/{id}/start", this::start);
         app.post("/v1/trips/{id}/complete", this::complete);
         app.post("/v1/trips/{id}/cancel", this::cancel);
+        app.get("/v1/trips/{id}/payment", this::payment);
+        app.get("/v1/riders/me/payments", this::riderPayments);
+    }
+
+    /** The rider's receipt — a 404 here just means PaymentService (async, off the TRIP_COMPLETED event) hasn't landed yet, not that anything failed. */
+    private void payment(Context ctx) {
+        Trip trip = tripService.get(ctx.pathParam("id"))
+                .orElseThrow(() -> new io.javalin.http.NotFoundResponse());
+        requireParty(ctx, trip);
+        paymentRepository.findByTripId(trip.tripId())
+                .ifPresentOrElse(ctx::json, () -> ctx.status(404).json(Map.of("error", "NO_PAYMENT_YET")));
+    }
+
+    /**
+     * A rider's full charge history, most recent first — the counterpart to the driver's
+     * {@code GET /v1/drivers/me/payouts}. Payments don't carry a rider_id column (only trip_id), so this
+     * joins at the application layer over the rider's own trips rather than a schema change — the same
+     * N+1-per-item trade-off {@code enrichAll} already makes, fine at this scale.
+     */
+    private void riderPayments(Context ctx) {
+        List<PaymentView> views = tripService.listForRider(riderId(ctx)).stream()
+                .flatMap(trip -> paymentRepository.findByTripId(trip.tripId())
+                        .map(payment -> new PaymentView(payment.paymentId(), payment.tripId(), payment.amount(),
+                                payment.status().name(), payment.gatewayReference(), payment.createdAt(), trip.fareFinal()))
+                        .stream())
+                .toList();
+        ctx.json(views);
+    }
+
+    /** DESIGN.md §4.1's estimate() half — a pure calculation, no trip created, no dispatch triggered. */
+    private void estimate(Context ctx) {
+        TripRequest request = ctx.bodyAsClass(TripRequest.class);
+        ctx.json(new FareEstimateResponse(tripService.estimateFare(request)));
     }
 
     private void create(Context ctx) {

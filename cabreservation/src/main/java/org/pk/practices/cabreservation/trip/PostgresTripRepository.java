@@ -27,8 +27,8 @@ public class PostgresTripRepository implements TripRepository {
             String sql = """
                     INSERT INTO trips (trip_id, rider_id, driver_id, status, pickup_lat, pickup_lng,
                         dropoff_lat, dropoff_lng, offered_driver_id, offer_expires_at, fare_estimate, fare_final,
-                        version, created_at, matched_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        version, created_at, matched_at, started_at, completed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """;
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 int i = 1;
@@ -47,6 +47,7 @@ public class PostgresTripRepository implements TripRepository {
                 statement.setLong(i++, trip.version());
                 statement.setTimestamp(i++, Timestamp.from(trip.createdAt()));
                 setNullableTimestamp(statement, i++, trip.matchedAt());
+                setNullableTimestamp(statement, i++, trip.startedAt());
                 setNullableTimestamp(statement, i++, trip.completedAt());
                 statement.executeUpdate();
             }
@@ -116,14 +117,29 @@ public class PostgresTripRepository implements TripRepository {
     }
 
     @Override
-    public boolean recordCompleted(Trip previous) {
+    public boolean recordStarted(Trip previous) {
         return database.withTransaction(connection -> {
-            String sql = "UPDATE trips SET status = ?, completed_at = ?, version = version + 1 WHERE trip_id = ? AND version = ?";
+            String sql = "UPDATE trips SET status = ?, started_at = ?, version = version + 1 WHERE trip_id = ? AND version = ?";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setString(1, TripStatus.COMPLETED.name());
+                statement.setString(1, TripStatus.IN_PROGRESS.name());
                 statement.setTimestamp(2, Timestamp.from(Instant.now()));
                 statement.setString(3, previous.tripId());
                 statement.setLong(4, previous.version());
+                return statement.executeUpdate() > 0;
+            }
+        });
+    }
+
+    @Override
+    public boolean recordCompleted(Trip previous, double fareFinal) {
+        return database.withTransaction(connection -> {
+            String sql = "UPDATE trips SET status = ?, completed_at = ?, fare_final = ?, version = version + 1 WHERE trip_id = ? AND version = ?";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, TripStatus.COMPLETED.name());
+                statement.setTimestamp(2, Timestamp.from(Instant.now()));
+                statement.setDouble(3, fareFinal);
+                statement.setString(4, previous.tripId());
+                statement.setLong(5, previous.version());
                 return statement.executeUpdate() > 0;
             }
         });
@@ -219,6 +235,7 @@ public class PostgresTripRepository implements TripRepository {
                 rs.getLong("version"),
                 toInstant(rs.getTimestamp("created_at")),
                 toInstant(rs.getTimestamp("matched_at")),
+                toInstant(rs.getTimestamp("started_at")),
                 toInstant(rs.getTimestamp("completed_at"))
         );
     }

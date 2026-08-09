@@ -14,13 +14,31 @@ Postgres-backed optimistic-concurrency CAS on driver status, not just
 described in prose. Every trip-returning endpoint responds with an enriched
 `TripView` rather than the raw trip row — riders see the assigned driver's
 name/rating and vice versa, and `GET /v1/trips` lists a caller's own trip
-history (past rides for a rider, past trips for a driver).
+history (past rides for a rider, past trips for a driver). Fare, rider
+charging, and driver payout (§4.6/§4.7 — both the AR and AP branches of the
+`par` block) are real too: a `fareEstimate` is computed at request time and
+a `fareFinal` at completion (haversine distance both times, but the actual
+started→completed duration the second time — no GPS-breadcrumb route
+tracking exists to do better); `PaymentService` charges the rider through a
+`FakePaymentGateway` and `PayoutService` pays the driver (fareFinal minus a
+flat 20% platform commission) through a `FakePayoutProvider`, both the
+instant a trip completes, both idempotently (`payments.trip_id UNIQUE` /
+`payouts.trip_id UNIQUE` are the real guarantees, same pattern as the
+driver-assignment CAS) and independently of each other, per §4.7's `par`
+block. `GET /v1/drivers/me/payouts` gives a driver their full earnings
+history and `GET /v1/riders/me/payments` gives a rider their full charge
+history, both grouped by the UI into Today/This week/This month/All time
+(rolling windows, computed client-side over the full list). A separate
+[Admin Stats](#admin-stats) page gives a platform-wide golden-signal rollup
+(§7) over the same windows, computed server-side.
 
 **Not yet implemented** (see the DESIGN.md and the phased plan for what's
-next): fare/pricing (`POST /v1/trips` takes no fare — `fareEstimate`/
-`fareFinal` stay `null`), payment/payout/invoicing (§4.6/§4.7), real-time
-WebSocket tracking (§4.5 — the browser UI polls instead), ratings (§4.8),
-and the observability instrumentation in §7.
+next): invoicing (the issuance side of §4.7 — `Invoice`/`TaxStrategy` are
+still unused scaffolding, and tips aren't modeled), real-time WebSocket
+tracking (§4.5 — the browser UI polls and calls OSRM directly instead),
+ratings (§4.8), and the rest of the observability instrumentation in §7
+(structured/correlated logging, tracing, the correctness canaries — Admin
+Stats covers the golden-signal counts/sums, not the whole section).
 
 Runs entirely locally, at zero cost — Postgres + Redis via Docker, matching
 this repo's `supplychain` module's local-dev philosophy.
@@ -73,7 +91,12 @@ role:
   "Choose pickup/dropoff on map" then click anywhere on the map, or type
   coordinates straight into the "Request a Trip" form — all three stay in
   sync, and the form fields remain the actual source of truth sent to the
-  server. The driver's marker renders as a small car icon in whatever color
+  server. An "Estimated fare" preview updates live (debounced ~300ms) as
+  either pin moves, calling `POST /v1/trips/estimate` — DESIGN.md §4.1's
+  `estimate()` half, a pure calculation with no trip created and no dispatch
+  triggered — so the price is visible *before* "Request trip" (the actual
+  `confirm()`) commits to anything. The driver's marker renders as a small
+  car icon in whatever color
   that driver has currently chosen (registration default, or a later
   update — see Accounts above), not a generic pin — the same shape used for
   the outstanding offer's driver during `MATCHING` and the assigned driver
@@ -82,7 +105,9 @@ role:
   live position on the map once one's assigned (or offered, during
   `MATCHING`), and offers a "Cancel trip" button for as long as the trip is
   still cancellable (`REQUESTED`/`MATCHING`/`MATCHED`/`DRIVER_ARRIVING` — it
-  disappears once a trip is `IN_PROGRESS`), plus a "Past Rides" history panel.
+  disappears once a trip is `IN_PROGRESS`), plus a "Payment History" panel
+  (Today/This week/This month/All time, same segmented control as the
+  driver's Earnings panel) and a "Past Rides" history panel.
 - **Driver** — a live map showing your own position, continuously tracked
   from the browser's real GPS via `watchPosition` (dragging the marker or
   editing the lat/lng fields still overrides it manually — useful for
@@ -91,10 +116,13 @@ role:
   (go online, go offline, send a location ping) that also auto-pings your
   current position to the server every ~4s while online; a "Vehicle" panel
   to change your car icon at any time (pre-filled with your current choice,
-  with a live preview as you pick); plus panels that
-  poll for a pending trip offer (accept/reject, with pickup/dropoff pins
-  drawn on the map) and, once matched, the active-trip controls (arrived /
-  start / complete), plus a "Past Trips" history panel.
+  with a live preview as you pick); an "Earnings" panel with Today/This
+  week/This month/All time buttons (rolling windows — last 24h/7d/30d, not
+  calendar boundaries) over your full payout history, auto-refreshing right
+  after a trip completes; plus panels that poll for a pending trip offer
+  (accept/reject, with pickup/dropoff pins drawn on the map) and, once
+  matched, the active-trip controls (arrived / start / complete), plus a
+  "Past Trips" history panel.
 
 The moment a trip goes `IN_PROGRESS` (driver taps "Start trip"), both maps
 draw the actual road route from pickup to dropoff — a real driving path, not
@@ -152,6 +180,12 @@ curl -X POST http://localhost:7071/v1/auth/register/rider -H "Content-Type: appl
 }'
 RIDER_TOKEN=...
 
+# Preview the fare before committing to anything — pure calculation, no trip created, no dispatch
+curl -X POST http://localhost:7071/v1/trips/estimate -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RIDER_TOKEN" \
+  -d '{"pickupLat": 37.7750, "pickupLng": -122.4183, "dropoffLat": 37.7849, "dropoffLng": -122.4094}'
+# -> {"fareEstimate": 5.20}
+
 # Request a trip near the driver — note there's no riderId field; it's derived from the token
 curl -X POST http://localhost:7071/v1/trips -H "Content-Type: application/json" \
   -H "Authorization: Bearer $RIDER_TOKEN" \
@@ -174,11 +208,20 @@ curl -X POST http://localhost:7071/v1/trips/$TRIP_ID/start -H "Authorization: Be
 curl -X POST http://localhost:7071/v1/trips/$TRIP_ID/complete -H "Authorization: Bearer $DRIVER_TOKEN"
 
 curl http://localhost:7071/v1/trips/$TRIP_ID -H "Authorization: Bearer $RIDER_TOKEN"
-# -> status: COMPLETED, and "driver" is now populated: {"id": "...", "name": "Dave", "rating": null}
+# -> status: COMPLETED, "driver" is now populated, and fareEstimate/fareFinal are both real numbers
 
 # Trip history — scoped to whichever role the caller's token actually is
 curl http://localhost:7071/v1/trips -H "Authorization: Bearer $RIDER_TOKEN"   # a rider's past rides
 curl http://localhost:7071/v1/trips -H "Authorization: Bearer $DRIVER_TOKEN"  # a driver's past trips
+
+# The charge — PaymentService reacts to TRIP_COMPLETED asynchronously, so this may 404 for a brief moment
+# right after /complete returns; it's ready within milliseconds in practice (in-process event bus).
+curl http://localhost:7071/v1/trips/$TRIP_ID/payment -H "Authorization: Bearer $RIDER_TOKEN"
+# -> {"paymentId": "...", "tripId": "...", "amount": 8.79, "status": "CHARGED", "gatewayReference": "fake_charge_...", "createdAt": "..."}
+
+# The driver's own earnings — full history, most recent first; the UI groups these into time windows client-side
+curl http://localhost:7071/v1/drivers/me/payouts -H "Authorization: Bearer $DRIVER_TOKEN"
+# -> [{"payoutId": "...", "tripId": "...", "amount": 7.03, "status": "PAID", "providerReference": "fake_payout_...", "createdAt": "...", "fareFinal": 8.79}]
 ```
 
 Every trip-returning response above (`create`, `get`, `list`,
@@ -202,6 +245,66 @@ party to that specific trip (its rider or its assigned driver), and
 *assigned* driver — a different driver's token gets `403 FORBIDDEN` on
 someone else's trip. No token, or an invalid/expired one, gets
 `401 UNAUTHENTICATED`.
+
+## Admin Stats
+
+A platform-wide golden-signal rollup (DESIGN.md §7) — trip counts by
+outcome, revenue, driver payouts, platform margin — over the same rolling
+Today/This week/This month/All time windows the rider/driver panels use,
+but computed **server-side** via aggregate SQL (`COUNT`/`SUM ... GROUP BY`)
+rather than shipping a full list to the client, since this is platform-wide
+data, not one person's history.
+
+This isn't a rider or driver account — it's not gated by `SessionManager`
+at all. Instead, `GET /v1/admin/stats` checks a shared-secret
+`X-Admin-Token` header against `CABRESERVATION_ADMIN_TOKEN` (defaults to
+`dev-admin-token` if unset — the server logs a warning on startup when
+you're running on that default). Same "not a production security model"
+spirit as the PBKDF2 + bearer-token layer everywhere else in this module,
+just an even simpler mechanism, appropriate to how much less this endpoint
+exposes (aggregates, not any individual's data).
+
+Open **http://localhost:7071/admin.html** in a browser — paste in the token
+and it loads immediately, split into a **Trip Outcomes** panel (requested,
+matched, completed, cancelled, no-drivers-found), a **Financials** panel,
+and an **All Requests** table — every trip platform-wide in the selected
+window, one row per request, with its rider/driver names, financial outcome
+(fare estimate/final, payment status + amount, payout status + amount), and
+a per-row **Margin** column (payment amount − payout amount, shown as "—"
+unless both actually settled — CHARGED and PAID — the same rule the
+aggregate Platform margin card follows), filterable by status and a
+free-text search over rider/driver name/trip ID (both applied client-side
+over the window's full list, same pattern as the rest of this module's
+history views). Backed by `GET /v1/admin/trips?window=...` — one joined query
+(`trips ⋈ riders ⋈ drivers ⋈ payments ⋈ payouts`) rather than N+1 lookups,
+since this can return every trip in the window, not one person's handful.
+Or via curl:
+
+```bash
+curl "http://localhost:7071/v1/admin/stats?window=today" -H "X-Admin-Token: dev-admin-token"
+# -> {"requested": 12, "matched": 9, "completed": 7, "cancelledByRider": 2,
+#     "cancelledByDriver": 0, "noDriversFound": 1, "totalRevenue": 58.30,
+#     "totalPayouts": 46.64, "paymentsCount": 7, "payoutsCount": 7,
+#     "totalFareValue": 58.30, "declinedPaymentsAmount": 0, "declinedPaymentsCount": 0,
+#     "failedPayoutsAmount": 0, "failedPayoutsCount": 0}
+```
+
+`window` is `today` (rolling 24h) / `week` (rolling 7d) / `month` (rolling
+30d) / `all` (no lower bound) — rolling, not calendar boundaries, since the
+server has no notion of the caller's timezone to anchor a calendar day to.
+`matched` counts trips that ever reached `MATCHED` (`matched_at IS NOT
+NULL`), regardless of what happened afterward, including a later
+cancellation — "was a driver ever assigned," not "is currently matched."
+
+The Financials panel deliberately separates "what actually settled"
+(`totalRevenue`/`totalPayouts` — CHARGED/PAID only) from "what should have"
+(`totalFareValue` — gross fare across every `COMPLETED` trip, charge outcome
+aside): the gap between them, together with `declinedPaymentsAmount` and
+`failedPayoutsAmount`, is what would surface a payment gateway silently
+failing rather than burying it inside one "revenue" figure. From these, the
+UI derives collection rate (`totalRevenue / totalFareValue`), take rate
+(margin `/ totalRevenue`), and average fare/payout per trip — all `"—"`
+rather than a `NaN`/misleading `0%` when a window has no data yet.
 
 ## Verifying the double-dispatch fix
 

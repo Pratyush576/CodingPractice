@@ -53,8 +53,12 @@ CREATE TABLE IF NOT EXISTS trips (
     version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency guard for status transitions
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     matched_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ, -- set when IN_PROGRESS begins; actual (matched_at..completed_at unavailable) driven-time input to the final fare
     completed_at TIMESTAMPTZ
 );
+-- schema.sql has no separate migration mechanism — it's just re-run on every startup — so an
+-- already-existing trips table (from before started_at existed) needs this to actually gain the column.
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 
 -- Backs MatchOfferTimeoutSweeper's poll query (find offers past their expiry, still MATCHING).
 CREATE INDEX IF NOT EXISTS idx_trips_matching_sweep ON trips (status, offer_expires_at) WHERE status = 'MATCHING';
@@ -78,6 +82,8 @@ CREATE TABLE IF NOT EXISTS payouts (
     provider_reference TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Backs the driver earnings view (GET /v1/drivers/me/payouts) — one lookup per driver, most recent first.
+CREATE INDEX IF NOT EXISTS idx_payouts_driver ON payouts (driver_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS invoices (
     invoice_id TEXT PRIMARY KEY,

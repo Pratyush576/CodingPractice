@@ -78,6 +78,7 @@ function render() {
     driverSection.classList.add('hidden');
     initRiderMap();
     loadRiderHistory();
+    loadRiderPaymentHistory();
   } else {
     driverSection.classList.remove('hidden');
     riderSection.classList.add('hidden');
@@ -85,6 +86,7 @@ function render() {
     pollDriverActiveTrip();
     loadDriverHistory();
     loadDriverProfile();
+    loadDriverEarnings();
   }
 }
 
@@ -160,17 +162,21 @@ function initRiderMap() {
     const { lat, lng } = pickupMarker.getLatLng();
     pickupLatInput.value = lat.toFixed(6);
     pickupLngInput.value = lng.toFixed(6);
+    scheduleFareEstimatePreview();
   });
   dropoffMarker.on('dragend', () => {
     const { lat, lng } = dropoffMarker.getLatLng();
     dropoffLatInput.value = lat.toFixed(6);
     dropoffLngInput.value = lng.toFixed(6);
+    scheduleFareEstimatePreview();
   });
 
   [pickupLatInput, pickupLngInput].forEach((el) =>
     el.addEventListener('change', () => syncMarkerFromInputs(pickupMarker, pickupLatInput, pickupLngInput)));
   [dropoffLatInput, dropoffLngInput].forEach((el) =>
     el.addEventListener('change', () => syncMarkerFromInputs(dropoffMarker, dropoffLatInput, dropoffLngInput)));
+  [pickupLatInput, pickupLngInput, dropoffLatInput, dropoffLngInput].forEach((el) =>
+    el.addEventListener('input', scheduleFareEstimatePreview));
 
   // "Choose on map": arm which pin the next map click should place, since a bare click is otherwise
   // ambiguous about whether it means pickup or dropoff. One click places the pin and disarms; dragging
@@ -201,6 +207,7 @@ function initRiderMap() {
       dropoffLngInput.value = lng.toFixed(6);
     }
     setPickMode(pickMode); // toggles back off
+    scheduleFareEstimatePreview();
   });
 
   // Real device location if the rider allows it — falls back to the demo default already in the inputs.
@@ -211,12 +218,49 @@ function initRiderMap() {
       pickupLngInput.value = longitude.toFixed(6);
       pickupMarker.setLatLng([latitude, longitude]);
       riderMap.setView([latitude, longitude], 14);
+      scheduleFareEstimatePreview();
     }, () => { /* permission denied or unavailable — keep the default pickup point */ }, { timeout: 8000 });
   }
 
   // A map initialized while its container was hidden (display:none) measures zero size — this section
   // was just unhidden by render(), so force a re-measure once the layout has settled.
   setTimeout(() => riderMap.invalidateSize(), 200);
+
+  // Show a preview for the default/pre-filled values immediately, not just after the rider's first edit.
+  scheduleFareEstimatePreview();
+}
+
+// ---- Fare estimate preview (DESIGN.md §4.1's estimate() half, shown before confirm()) ----
+// Debounced rather than fired on every drag frame/keystroke — a 300ms pause is enough to feel "live"
+// without hitting the backend on every pixel of a marker drag.
+
+let fareEstimateDebounceTimer = null;
+
+function scheduleFareEstimatePreview() {
+  clearTimeout(fareEstimateDebounceTimer);
+  fareEstimateDebounceTimer = setTimeout(updateFareEstimatePreview, 300);
+}
+
+async function updateFareEstimatePreview() {
+  const previewEl = document.getElementById('fareEstimatePreview');
+  const pickupLat = Number(document.querySelector('input[name="pickupLat"]').value);
+  const pickupLng = Number(document.querySelector('input[name="pickupLng"]').value);
+  const dropoffLat = Number(document.querySelector('input[name="dropoffLat"]').value);
+  const dropoffLng = Number(document.querySelector('input[name="dropoffLng"]').value);
+  if (![pickupLat, pickupLng, dropoffLat, dropoffLng].every(Number.isFinite)) {
+    previewEl.classList.add('hidden');
+    return;
+  }
+  try {
+    const result = await api('/v1/trips/estimate', {
+      method: 'POST',
+      body: JSON.stringify({ pickupLat, pickupLng, dropoffLat, dropoffLng }),
+    });
+    previewEl.innerHTML = `<span>Estimated fare</span><span class="amount">$${result.fareEstimate.toFixed(2)}</span>`;
+    previewEl.classList.remove('hidden');
+  } catch (err) {
+    previewEl.classList.add('hidden');
+  }
 }
 
 /** Shows the driver's live position once one exists — the assigned driver if matched, otherwise whoever the outstanding MATCHING offer went to. */
@@ -350,6 +394,34 @@ function setEta(elementId, text) {
   if (!el) return;
   el.textContent = text;
   el.classList.toggle('hidden', !text);
+}
+
+function fareRow(label, amount) {
+  return amount == null ? '' : `<li><span>${label}</span><span>$${amount.toFixed(2)}</span></li>`;
+}
+
+/** The rider's charge — fetched once a trip lands on COMPLETED. A 404 just means PaymentService (async, off the TRIP_COMPLETED event) hasn't landed yet, so this retries briefly rather than treating it as a real error. */
+async function showRiderReceipt(tripId, attempt = 1) {
+  const el = document.getElementById('tripReceipt');
+  try {
+    const payment = await api(`/v1/trips/${tripId}/payment`);
+    if (payment.status === 'CHARGED') {
+      el.textContent = `Charged $${payment.amount.toFixed(2)} — ref ${payment.gatewayReference}`;
+      el.className = 'result success';
+    } else {
+      el.textContent = `Payment declined ($${payment.amount.toFixed(2)})`;
+      el.className = 'result error';
+    }
+    el.classList.remove('hidden');
+  } catch (err) {
+    if (attempt < 6) {
+      setTimeout(() => showRiderReceipt(tripId, attempt + 1), 500);
+    } else {
+      el.textContent = 'Payment processing…';
+      el.className = 'result';
+      el.classList.remove('hidden');
+    }
+  }
 }
 
 async function showRiderRoute(trip) {
@@ -535,6 +607,7 @@ document.getElementById('tripForm').addEventListener('submit', async (e) => {
     clearRiderRoute();
     setEta('tripEta', '');
     riderArrivingEtaTripId = null;
+    document.getElementById('tripReceipt').classList.add('hidden');
     document.getElementById('cancelTripResult').textContent = '';
     document.getElementById('tripStatusSection').classList.remove('hidden');
     if (pollTimer) clearInterval(pollTimer);
@@ -559,13 +632,25 @@ document.getElementById('cancelTripBtn').addEventListener('click', async () => {
   }
 });
 
+/** Gives the status badge a color that matches what the status actually means, not one flat accent color regardless of outcome. */
+function badgeStatusClass(status) {
+  if (status === 'COMPLETED') return 'status-good';
+  if (status === 'IN_PROGRESS') return 'status-live';
+  if (['CANCELLED_BY_RIDER', 'CANCELLED_BY_DRIVER', 'NO_DRIVERS_FOUND'].includes(status)) return 'status-bad';
+  return '';
+}
+
 async function pollTripStatus(tripId) {
   try {
     const trip = await api(`/v1/trips/${tripId}`);
-    document.getElementById('tripStatusBadge').textContent = trip.status;
+    const badgeEl = document.getElementById('tripStatusBadge');
+    badgeEl.textContent = trip.status;
+    badgeEl.className = `badge ${badgeStatusClass(trip.status)}`.trim();
     document.getElementById('tripStatusList').innerHTML = `
       <li><span>Trip ID</span><span>${trip.tripId}</span></li>
       ${tripPartyRows(trip)}
+      ${fareRow('Fare estimate', trip.fareEstimate)}
+      ${fareRow('Final fare', trip.fareFinal)}
     `;
     document.getElementById('cancelTripBtn').classList.toggle('hidden', !RIDER_CANCELLABLE_STATUSES.includes(trip.status));
     updateRiderDriverMarker(trip);
@@ -578,6 +663,12 @@ async function pollTripStatus(tripId) {
       clearRiderRoute();
       setEta('tripEta', '');
       riderArrivingEtaTripId = null;
+    }
+    if (trip.status === 'COMPLETED') {
+      showRiderReceipt(trip.tripId);
+      // Same async-lag caveat as the driver's earnings auto-refresh — a manual "Refresh" click catches up
+      // if PaymentService hasn't landed the charge by the time this fires.
+      loadRiderPaymentHistory();
     }
     if (['COMPLETED', 'CANCELLED_BY_RIDER', 'CANCELLED_BY_DRIVER', 'NO_DRIVERS_FOUND'].includes(trip.status) && pollTimer) {
       clearInterval(pollTimer);
@@ -649,7 +740,7 @@ async function loadDriverHistory() {
 
 function renderHistory(listEl, trips, counterpartLine) {
   if (!trips.length) {
-    listEl.innerHTML = '<li><span>No trips yet</span><span></span></li>';
+    listEl.innerHTML = '<li class="empty">No trips yet</li>';
     return;
   }
   listEl.innerHTML = trips
@@ -659,6 +750,96 @@ function renderHistory(listEl, trips, counterpartLine) {
       <li><span>${formatWhen(trip.createdAt)} — ${trip.status}</span><span>${counterpartLine(trip)}</span></li>
     `)
     .join('');
+}
+
+// ---- Windowed money lists (driver earnings + rider payment history) ----
+// Time-window filtering happens client-side over the full list, the same "server returns the raw list,
+// client renders/groups it" pattern trip history already uses — no family of server-side ?window= query
+// params to maintain as new window ideas come up. Both panels share this exact shape (a segmented
+// control, a summary line, an itemized list), so one renderer backs both instead of two near-duplicates.
+
+/** Rolling windows (last 24h/7d/30d from now), not calendar boundaries — simpler, no timezone/day-of-week edge cases to get wrong in a demo app. */
+function windowStart(window) {
+  const now = new Date();
+  if (window === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (window === 'week') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  if (window === 'month') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  return null; // all time
+}
+
+function wireWindowButtons(selector, onChange) {
+  const buttons = document.querySelectorAll(selector);
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buttons.forEach((b) => b.classList.remove('armed'));
+      btn.classList.add('armed');
+      onChange(btn.dataset.window);
+    });
+  });
+  buttons[0].classList.add('armed');
+  return buttons[0].dataset.window;
+}
+
+function renderMoneyWindow(summaryEl, listEl, items, window, settledStatus, verb) {
+  const start = windowStart(window);
+  const filtered = items
+    .filter((item) => !start || new Date(item.createdAt) >= start)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const settled = filtered.filter((item) => item.status === settledStatus);
+  const total = settled.reduce((sum, item) => sum + item.amount, 0);
+  summaryEl.innerHTML = `<span>${settled.length} trip${settled.length === 1 ? '' : 's'}</span><span class="amount">$${total.toFixed(2)} ${verb}</span>`;
+  summaryEl.classList.remove('hidden');
+
+  if (!filtered.length) {
+    listEl.innerHTML = '<li class="empty">Nothing in this window</li>';
+    return;
+  }
+  listEl.innerHTML = filtered
+    .map((item) => `
+      <li><span>${formatWhen(item.createdAt)} — ${item.status}</span><span>$${item.amount.toFixed(2)}${item.fareFinal != null ? ` (fare $${item.fareFinal.toFixed(2)})` : ''}</span></li>
+    `)
+    .join('');
+}
+
+// ---- Driver: earnings ----
+
+let earningsWindow = wireWindowButtons('.earnings-window', (window) => {
+  earningsWindow = window;
+  loadDriverEarnings();
+});
+document.getElementById('refreshEarningsBtn').addEventListener('click', loadDriverEarnings);
+
+async function loadDriverEarnings() {
+  const summaryEl = document.getElementById('earningsSummary');
+  const listEl = document.getElementById('earningsList');
+  try {
+    const payouts = await api('/v1/drivers/me/payouts');
+    renderMoneyWindow(summaryEl, listEl, payouts, earningsWindow, 'PAID', 'earned');
+  } catch (err) {
+    summaryEl.classList.add('hidden');
+    listEl.innerHTML = `<li class="empty">${err.message}</li>`;
+  }
+}
+
+// ---- Rider: payment history ----
+
+let paymentHistoryWindow = wireWindowButtons('.payment-window', (window) => {
+  paymentHistoryWindow = window;
+  loadRiderPaymentHistory();
+});
+document.getElementById('refreshPaymentHistoryBtn').addEventListener('click', loadRiderPaymentHistory);
+
+async function loadRiderPaymentHistory() {
+  const summaryEl = document.getElementById('paymentSummary');
+  const listEl = document.getElementById('paymentHistoryList');
+  try {
+    const payments = await api('/v1/riders/me/payments');
+    renderMoneyWindow(summaryEl, listEl, payments, paymentHistoryWindow, 'CHARGED', 'charged');
+  } catch (err) {
+    summaryEl.classList.add('hidden');
+    listEl.innerHTML = `<li class="empty">${err.message}</li>`;
+  }
 }
 
 // ---- Driver ----
@@ -711,18 +892,29 @@ async function pollDriverActiveTrip() {
   if (pollTimer) return;
   pollTimer = setInterval(async () => {
     try {
+      // 200 + null is the normal "no active trip right now" response, not a 404 — a driver spends most
+      // of their online time in exactly this state, so it's not treated as an error.
       const trip = await api('/v1/drivers/me/active-trip');
-      wasActive = true;
-      renderDriverTrip(trip);
-    } catch (err) {
-      document.getElementById('offerSection').classList.add('hidden');
-      document.getElementById('activeTripSection').classList.add('hidden');
-      updateDriverTripMarkers(null);
-      clearDriverRoute();
-      if (wasActive) {
-        wasActive = false;
-        loadDriverHistory();
+      if (trip) {
+        wasActive = true;
+        renderDriverTrip(trip);
+      } else {
+        document.getElementById('offerSection').classList.add('hidden');
+        document.getElementById('activeTripSection').classList.add('hidden');
+        updateDriverTripMarkers(null);
+        clearDriverRoute();
+        setEta('driverTripEta', '');
+        if (wasActive) {
+          wasActive = false;
+          loadDriverHistory();
+          // Payout lands slightly after TRIP_COMPLETED (async off the event bus) — one poll tick's
+          // worth of delay before it shows up here is expected, not a bug; refreshing again next tick
+          // (e.g. clicking "Refresh") picks it up.
+          loadDriverEarnings();
+        }
       }
+    } catch (err) {
+      // a genuine transient failure (network blip, etc.) — next tick retries
     }
   }, 1000);
 }

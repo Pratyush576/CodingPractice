@@ -17,8 +17,11 @@ public interface TripRepository {
     /** MATCHING → MATCHED, and sets driverId/matchedAt in the same write. */
     boolean recordMatched(Trip previous, String driverId);
 
-    /** IN_PROGRESS → COMPLETED, and sets completedAt in the same write. */
-    boolean recordCompleted(Trip previous);
+    /** ARRIVED → IN_PROGRESS, and sets startedAt in the same write — the real input to the final fare's duration. */
+    boolean recordStarted(Trip previous);
+
+    /** IN_PROGRESS → COMPLETED, and sets completedAt + the computed fareFinal in the same write. */
+    boolean recordCompleted(Trip previous, double fareFinal);
 
     /** Backs MatchOfferTimeoutSweeper — trips still MATCHING whose offer has expired. */
     List<Trip> findExpiredOffers(Instant now);

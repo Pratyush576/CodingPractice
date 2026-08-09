@@ -258,6 +258,27 @@ now covers both dimensions of the diagram's visual language — arrow style
 (sync vs. async, per above) and node color/shape (what kind of thing each
 box is) — so neither has to be inferred from context.
 
+**Implementation status — `Bus` and `GeoIndex`, precisely:** both nodes
+above are real in the buildable version, but not at the durability/rigor
+this diagram's reasoning assumes, and it's worth being exact about the gap
+rather than letting "we have an event bus" / "we have a cache" imply more
+than is true. `Bus` here means a Kafka-shaped partitioned log; the actual
+`InProcessEventBus` hands each `publish()` to a plain `ExecutorService`
+(four threads), which is itself backed by an in-memory task queue — a real
+queue in the literal sense (an event waits there between publish and a
+worker thread picking it up), just not a durable or replayable one: nothing
+survives a process crash, there's no partitioning, no consumer groups, no
+backpressure if publishers ever outpaced those four workers. `GeoIndex` is
+genuinely Redis as designed, but it's a cache only in the sense of "fast,
+in-memory, fully rebuildable, never the source of truth for driver status"
+— not a cache sitting in front of expensive Postgres reads. Nothing in this
+build caches a query result anywhere; the one exception is a per-request
+`HashMap` memoizing repeated rider/driver lookups inside a single trip-list
+response (`TripController.enrichAll`), which is a function-level detail,
+not an architectural cache layer. If read load ever made one worth adding,
+this repo's own [Caching](../caching/DESIGN.md) design is the natural
+starting point for which pattern to reach for.
+
 ---
 
 ## 3. Domain Model
@@ -686,6 +707,27 @@ with two different answers at two different times. A tip is its own
 idempotent operation, keyed on `(tripId, TIP)`, that amends the `Invoice`
 with a new line item and a corrected `total` — not a reason to reopen or
 re-run the original charge.
+
+**Implementation status:** the buildable version in
+[`cabreservation/`](../../../../../../../../../cabreservation/README.md)
+has both halves of the `par` block for real, running independently exactly
+as designed. `BaseFarePricingStrategy` computes `fareEstimate` at request
+time and `fareFinal` at completion (distance is haversine, not GPS-tracked,
+both times — same simplification as [§4.5](#45-real-time-location-tracking--eta)'s
+routing; only the duration input is genuinely observed the second time).
+`PaymentService` (AR) charges the rider through a `FakePaymentGateway`, and
+`PayoutService` (AP) pays the driver — `finalFare × (1 − 20% flat
+commission)` — through a `FakePayoutProvider`, both the moment
+`TRIP_COMPLETED` fires, both idempotently via `payments.trip_id UNIQUE` /
+`payouts.trip_id UNIQUE` — the same DB-level guarantee this design leans on
+for driver assignment (§4.3), not just an application-level check. A driver
+sees their full earnings history via `GET /v1/drivers/me/payouts`. What's
+still just this section's prose, not code: `Invoice` assembly, issuance,
+and delivery, the pluggable `TaxStrategy`, tips, and batched payout
+(§4.7's documented alternative to the instant payout actually built) —
+nothing publishes `InvoiceIssued` yet, and the flat commission rate isn't
+itself a pluggable `PayoutStrategy` the way §4.7's prose frames it, just a
+constant.
 
 ### 4.8 Ratings & Feedback
 

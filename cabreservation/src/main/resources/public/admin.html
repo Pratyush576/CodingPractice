@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cab Reservation — Admin</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Cab Reservation <span class="role">Admin</span></h1>
+</header>
+
+<main>
+  <section>
+    <h2>Admin Token</h2>
+    <p class="hint">Not a real security boundary — a shared dev secret
+      (<code>CABRESERVATION_ADMIN_TOKEN</code>, defaults to
+      <code>dev-admin-token</code>), same "not a production security model"
+      spirit as the rider/driver auth elsewhere in this app.</p>
+    <div class="row">
+      <label>Token <input type="password" id="adminTokenInput" placeholder="dev-admin-token"></label>
+    </div>
+    <button type="button" id="saveTokenBtn">Save &amp; load stats</button>
+    <div id="tokenResult" class="result"></div>
+  </section>
+
+  <section>
+    <h2>Platform Stats</h2>
+    <p class="hint">Rolling windows (last 24h / 7d / 30d from now), not calendar boundaries — the server has
+      no notion of your timezone to anchor a calendar day to. Applies to every panel below.</p>
+    <div class="segmented">
+      <button type="button" class="stats-window" data-window="today">Today</button>
+      <button type="button" class="stats-window" data-window="week">This week</button>
+      <button type="button" class="stats-window" data-window="month">This month</button>
+      <button type="button" class="stats-window" data-window="all">All time</button>
+    </div>
+    <button type="button" id="refreshStatsBtn" class="secondary">Refresh</button>
+    <div id="statsResult" class="result"></div>
+  </section>
+
+  <section>
+    <h2>Trip Outcomes</h2>
+    <div id="outcomeGrid" class="stats-grid"></div>
+  </section>
+
+  <section>
+    <h2>Financials</h2>
+    <p class="hint">"Revenue" and "Driver payouts" are what actually settled (CHARGED/PAID only). "Fare
+      value" is the gross fare across every completed trip regardless of charge outcome — the gap between
+      it and Revenue, together with Declined charges, is what surfaces silent collection failures instead
+      of hiding them inside one number.</p>
+    <div id="financialGrid" class="stats-grid"></div>
+  </section>
+
+  <section>
+    <h2>All Requests</h2>
+    <p class="hint">Every trip request platform-wide within the window above, with its financial outcome —
+      filtered further by status and/or a text search below, both applied client-side over that same list.</p>
+    <div class="row">
+      <label>Status
+        <select id="tripStatusFilter">
+          <option value="">All statuses</option>
+          <option value="REQUESTED">Requested</option>
+          <option value="MATCHING">Matching</option>
+          <option value="MATCHED">Matched</option>
+          <option value="DRIVER_ARRIVING">Driver arriving</option>
+          <option value="ARRIVED">Arrived</option>
+          <option value="IN_PROGRESS">In progress</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="CANCELLED_BY_RIDER">Cancelled by rider</option>
+          <option value="CANCELLED_BY_DRIVER">Cancelled by driver</option>
+          <option value="NO_DRIVERS_FOUND">No drivers found</option>
+        </select>
+      </label>
+      <label>Search <input type="text" id="tripSearchInput" placeholder="Rider, driver, or trip ID"></label>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Rider</th>
+            <th>Driver</th>
+            <th>Est.</th>
+            <th>Final</th>
+            <th>Payment</th>
+            <th>Payout</th>
+            <th>Margin</th>
+          </tr>
+        </thead>
+        <tbody id="tripsTableBody"></tbody>
+      </table>
+    </div>
+    <div id="tripsCount" class="hint"></div>
+    <div id="tripsResult" class="result"></div>
+  </section>
+</main>
+
+<script src="/admin.js"></script>
+</body>
+</html>

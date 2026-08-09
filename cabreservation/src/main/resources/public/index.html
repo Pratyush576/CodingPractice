@@ -97,6 +97,7 @@
         <label>Dropoff lat <input type="number" step="any" name="dropoffLat" value="37.7849" required></label>
         <label>Dropoff lng <input type="number" step="any" name="dropoffLng" value="-122.4094" required></label>
       </div>
+      <p id="fareEstimatePreview" class="summary-line hidden"></p>
       <button type="submit">Request trip</button>
       <div id="tripResult" class="result"></div>
     </form>
@@ -106,8 +107,22 @@
     <h2>Trip Status <span class="badge" id="tripStatusBadge"></span></h2>
     <p id="tripEta" class="eta hidden"></p>
     <ul class="status-list" id="tripStatusList"></ul>
+    <p id="tripReceipt" class="result hidden"></p>
     <button type="button" id="cancelTripBtn" class="secondary">Cancel trip</button>
     <div id="cancelTripResult" class="result"></div>
+  </section>
+
+  <section>
+    <h2>Payment History</h2>
+    <div class="segmented">
+      <button type="button" class="payment-window" data-window="today">Today</button>
+      <button type="button" class="payment-window" data-window="week">This week</button>
+      <button type="button" class="payment-window" data-window="month">This month</button>
+      <button type="button" class="payment-window" data-window="all">All time</button>
+    </div>
+    <p id="paymentSummary" class="summary-line hidden"></p>
+    <ul class="status-list" id="paymentHistoryList"></ul>
+    <button type="button" id="refreshPaymentHistoryBtn" class="secondary">Refresh</button>
   </section>
 
   <section>
@@ -155,7 +170,20 @@
     <div id="updateCarIconResult" class="result"></div>
   </section>
 
-  <section id="offerSection" class="hidden">
+  <section>
+    <h2>Earnings</h2>
+    <div class="segmented">
+      <button type="button" class="earnings-window" data-window="today">Today</button>
+      <button type="button" class="earnings-window" data-window="week">This week</button>
+      <button type="button" class="earnings-window" data-window="month">This month</button>
+      <button type="button" class="earnings-window" data-window="all">All time</button>
+    </div>
+    <p id="earningsSummary" class="summary-line hidden"></p>
+    <ul class="status-list" id="earningsList"></ul>
+    <button type="button" id="refreshEarningsBtn" class="secondary">Refresh</button>
+  </section>
+
+  <section id="offerSection" class="hidden live">
     <h2>Trip Offer</h2>
     <ul class="status-list" id="offerStatusList"></ul>
     <div class="row">
@@ -164,7 +192,7 @@
     </div>
   </section>
 
-  <section id="activeTripSection" class="hidden">
+  <section id="activeTripSection" class="hidden live">
     <h2>Active Trip</h2>
     <p id="driverTripEta" class="eta hidden"></p>
     <ul class="status-list" id="activeTripList"></ul>

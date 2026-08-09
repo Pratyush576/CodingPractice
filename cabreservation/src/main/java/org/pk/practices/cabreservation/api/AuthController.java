@@ -50,6 +50,7 @@ public class AuthController {
         app.before("/v1/trips/*", this::requireSession);
         app.before("/v1/drivers", this::requireSession);
         app.before("/v1/drivers/*", this::requireSession);
+        app.before("/v1/riders/*", this::requireSession);
 
         app.exception(AuthenticationException.class, (e, ctx) ->
                 ctx.status(401).json(Map.of("error", "UNAUTHENTICATED", "message", e.getMessage())));
