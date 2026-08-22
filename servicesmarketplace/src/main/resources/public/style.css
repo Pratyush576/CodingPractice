@@ -1,0 +1,204 @@
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --border: #dde1e7;
+  --border-soft: #e8eaef;
+  --text: #1a1f27;
+  --muted: #626b78;
+  --accent: #1c4e6e;
+  --accent-soft: #e5edf2;
+  --accent-contrast: #ffffff;
+  --success: #147a52;
+  --success-soft: #e3f5ec;
+  --warning: #8a6a0f;
+  --warning-soft: #fbf1d9;
+  --error: #a8271f;
+  --error-soft: #fbe9e7;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow-sm: 0 1px 2px rgba(20, 24, 32, 0.05);
+  --shadow-md: 0 4px 16px rgba(20, 24, 32, 0.07);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151a;
+    --surface: #1a1e26;
+    --border: #2c313c;
+    --border-soft: #262b34;
+    --text: #e7eaf0;
+    --muted: #98a1b0;
+    --accent: #7fbce8;
+    --accent-soft: #1f3140;
+    --accent-contrast: #08131c;
+    --success: #4fd39a;
+    --success-soft: #143229;
+    --warning: #e8c25f;
+    --warning-soft: #362c11;
+    --error: #f0897e;
+    --error-soft: #3a1a17;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+header h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+
+.role {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+main { max-width: 640px; margin: 1.75rem auto; padding: 0 1rem 2rem; }
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.35rem;
+  margin-bottom: 1.1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+section.live { border-color: var(--accent); box-shadow: var(--shadow-md); border-left: 3px solid var(--accent); }
+
+h2 { margin: 0 0 0.9rem; font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+
+.tabs { display: flex; gap: 0.4rem; margin-bottom: 1.1rem; background: var(--bg); padding: 0.25rem; border-radius: var(--radius-sm); }
+.tab {
+  flex: 1;
+  padding: 0.45rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  border-radius: calc(var(--radius-sm) - 2px);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+
+form { display: flex; flex-direction: column; gap: 0.7rem; }
+label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.83rem; color: var(--muted); font-weight: 500; }
+input, select, textarea {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.row > label { flex: 1 1 140px; }
+
+button {
+  padding: 0.6rem 1.1rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.05s ease;
+}
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button.secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+button.secondary:hover { filter: none; background: var(--bg); }
+
+.result { font-size: 0.85rem; line-height: 1.5; }
+.result.error { color: var(--error); }
+.result.success { color: var(--success); }
+
+.status-list { list-style: none; padding: 0; margin: 0; }
+.status-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 0.88rem;
+}
+.status-list li:last-child { border-bottom: none; }
+.status-list li .line { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+.status-list li .line > span:first-child { color: var(--muted); flex-shrink: 0; }
+.status-list li .line > span:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+.status-list li.empty { justify-content: center; color: var(--muted); font-style: italic; padding: 1rem 0; }
+.status-list li .actions { display: flex; gap: 0.5rem; margin-top: 0.2rem; }
+.status-list li .actions button { padding: 0.35rem 0.75rem; font-size: 0.82rem; }
+
+.badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.badge.status-live { background: var(--warning-soft); color: var(--warning); }
+.badge.status-good { background: var(--success-soft); color: var(--success); }
+.badge.status-bad { background: var(--error-soft); color: var(--error); }
+
+.hidden { display: none !important; }
+
+.account-bar { display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; }
+.account-bar button { padding: 0.35rem 0.75rem; font-size: 0.85rem; }
+
+.hint { font-size: 0.8rem; color: var(--muted); margin: -0.5rem 0 0.9rem; line-height: 1.45; }
+
+.summary-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.9rem;
+  margin: 0 0 0.9rem;
+}
+.summary-line .amount { font-variant-numeric: tabular-nums; font-size: 1.05rem; }

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Services Marketplace</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Local Services Marketplace</h1>
+  <div id="accountBar" class="account-bar hidden">
+    <span id="accountInfo"></span>
+    <button id="logoutBtn" type="button" class="secondary">Log out</button>
+  </div>
+</header>
+
+<main id="authSection">
+  <section>
+    <div class="tabs">
+      <button type="button" class="tab active" data-tab="login">Log in</button>
+      <button type="button" class="tab" data-tab="register">Create account</button>
+    </div>
+
+    <form id="loginForm">
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+      <button type="submit">Log in</button>
+      <div id="loginResult" class="result"></div>
+    </form>
+
+    <form id="registerForm" class="hidden">
+      <label>I am a
+        <select name="accountType">
+          <option value="customer">Customer</option>
+          <option value="pro">Pro</option>
+        </select>
+      </label>
+      <label id="nameLabel">Full name <input name="name" required></label>
+      <label>Email <input type="email" name="email" required autocomplete="username"></label>
+      <label>Password <input type="password" name="password" minlength="8" required autocomplete="new-password"></label>
+      <div id="profileFields" class="hidden">
+        <p class="hint">Your service area — Requests inside this radius of your base location will be matched to you.</p>
+        <label>Category
+          <select name="categoryId">
+            <option value="house-cleaning">House Cleaning</option>
+            <option value="handyman">Handyman</option>
+          </select>
+        </label>
+        <div class="row">
+          <label>Base lat <input type="number" step="any" name="lat" value="37.7749"></label>
+          <label>Base lng <input type="number" step="any" name="lng" value="-122.4194"></label>
+        </div>
+        <div class="row">
+          <label>Service radius (km) <input type="number" step="any" name="radiusKm" value="15"></label>
+          <label>Starting price <input type="number" step="any" name="startingPrice" value="80"></label>
+        </div>
+      </div>
+      <button type="submit">Create account</button>
+      <div id="registerResult" class="result"></div>
+    </form>
+  </section>
+</main>
+
+<main id="customerSection" class="hidden">
+  <section>
+    <h2>Post a Request <span class="role">Customer</span></h2>
+    <form id="requestForm">
+      <label>Category
+        <select name="categoryId">
+          <option value="house-cleaning">House Cleaning</option>
+          <option value="handyman">Handyman</option>
+        </select>
+      </label>
+      <label>Details <textarea name="details" rows="2" placeholder="e.g. 1200 sq ft, weekly"></textarea></label>
+      <div class="row">
+        <label>Location lat <input type="number" step="any" name="lat" value="37.7750" required></label>
+        <label>Location lng <input type="number" step="any" name="lng" value="-122.4183" required></label>
+      </div>
+      <label>Timing <input name="desiredTiming" placeholder="e.g. this week"></label>
+      <button type="submit">Post request</button>
+      <div id="requestResult" class="result"></div>
+    </form>
+  </section>
+
+  <section>
+    <h2>My Requests</h2>
+    <button type="button" id="refreshRequestsBtn" class="secondary">Refresh</button>
+    <ul class="status-list" id="requestsList"></ul>
+  </section>
+</main>
+
+<main id="proSection" class="hidden">
+  <section>
+    <h2>Credits <span class="role">Pro</span></h2>
+    <p id="creditBalance" class="summary-line">Balance: <span class="amount">—</span></p>
+    <div class="row">
+      <input type="number" id="purchaseAmount" value="100" step="any" style="max-width:120px">
+      <button type="button" id="purchaseCreditsBtn" class="secondary">Add test credits</button>
+    </div>
+    <div id="creditResult" class="result"></div>
+  </section>
+
+  <section>
+    <h2>My Leads</h2>
+    <p class="hint">Unlocking a Lead spends Credits and reveals it's ready to quote. Quoting is only possible after unlocking.</p>
+    <button type="button" id="refreshLeadsBtn" class="secondary">Refresh</button>
+    <ul class="status-list" id="leadsList"></ul>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

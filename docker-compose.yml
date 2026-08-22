@@ -63,6 +63,23 @@ services:
     ports:
       - "6379:6379"
 
+  servicesmarketplace-postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: servicesmarketplace
+      POSTGRES_PASSWORD: servicesmarketplace
+      POSTGRES_DB: servicesmarketplace
+    volumes:
+      - servicesmarketplace-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U servicesmarketplace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   supplychain-postgres-data:
   cabreservation-postgres-data:
+  servicesmarketplace-postgres-data:
